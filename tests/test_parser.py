@@ -122,3 +122,28 @@ def test_run_depths_cannot_move_backwards():
     lines[14] = "Инт:102-105м – по бурению"
     result = parse_lines(lines)
     assert result.has_errors and "run_overlap" in [i.code for i in result.issues]
+
+
+@pytest.mark.parametrize("label", ["Проход 19м", "проходка 19 м", "Проход\u00a0−\u202f19м"])
+def test_explicit_run_progress(label):
+    lines = list(SYNTHETIC)
+    lines[4] = label + ", вынос керна – 18,48м"
+    result = parse_lines(lines)
+    assert result.runs[0].drilled == Decimal(19)
+    assert result.runs[0].recovered == Decimal("18.48")
+
+
+@pytest.mark.parametrize("label", ["непроход 19м", "проходками 19м", "Проход без величины"])
+def test_progress_requires_whole_label_and_quantity(label):
+    lines = list(SYNTHETIC)
+    lines[4] = label
+    assert parse_lines(lines).runs[0].drilled is None
+
+
+def test_layer_progress_cannot_fill_run_field():
+    lines = list(SYNTHETIC)
+    lines[4] = "вынос керна 3м"
+    lines[8] += " Проход 19м."
+    result = parse_lines(lines)
+    assert result.runs[0].drilled is None
+    assert "Проход 19м." in result.layers[0].full_text

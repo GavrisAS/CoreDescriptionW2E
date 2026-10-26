@@ -133,7 +133,7 @@ def parse_document(document: ImportedDocument) -> ParseResult:
         if len(found) == 1 and re.search(r"по\s+бурению\s+и\s+каротажу", text, re.I):
             run.gis = found[0]
         for attr, pattern in (
-            ("drilled", rf"\bпроходка\s*[-–—:]?\s*({NUMBER})\s*м\b"),
+            ("drilled", rf"\b(?:проходка|проход)\b\s*(?:{DASH}|:)?\s*({NUMBER})\s*м\b"),
             ("recovered", rf"\bвынос(?:\s+керна)?\s*[-–—:]?\s*({NUMBER})\s*м\b"),
         ):
             m = re.search(pattern, text, re.I)

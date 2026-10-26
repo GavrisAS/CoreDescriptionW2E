@@ -2,34 +2,54 @@ name: Windows portable
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
   workflow_dispatch:
     inputs:
-      publish:
-        description: 'Publish a prerelease after all checks pass'
-        type: boolean
-        default: false
+      mode:
+        description: 'New production release, or diagnostic only (no tag/release)'
+        type: choice
+        options: [diagnostic, production]
+        default: diagnostic
 permissions:
   contents: read
+# The slot covers allocation through publication. PR/diagnostic runs are independent.
+# https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax
+concurrency:
+  group: ${{ (github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.mode == 'production')) && 'windows-production-release' || format('windows-diagnostic-{0}', github.run_id) }}
+  cancel-in-progress: false
+  queue: max
+env:
+  BUILD_MODE: ${{ inputs.mode || 'production' }}
 jobs:
   quality:
     uses: ./.github/workflows/ci.yml
   portable:
     needs: quality
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      production: ${{ steps.plan.outputs.production }}
     env:
       PYTHONUTF8: '1'
       QT_QPA_PLATFORM: offscreen
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.2
         with:
           python-version: '3.14'
           enable-cache: true
+      - name: Allocate after fresh tag and release inventory
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: uv run python scripts/release.py plan
       - shell: pwsh
-        run: ./scripts/build_windows.ps1 -Commit '${{ github.sha }}'
-      - uses: actions/upload-artifact@v4
+        env:
+          BUILD_VERSION: ${{ steps.plan.outputs.version }}
+        run: ./scripts/build_windows.ps1 -Commit $env:GITHUB_SHA -Version $env:BUILD_VERSION
+      - uses: actions/upload-artifact@v7
         with:
           name: CoreDescriptionW2E-windows-x64
           path: |
@@ -37,32 +57,33 @@ jobs:
             dist/CoreDescriptionW2E-v*-windows-x64.zip.sha256
             dist/manifest.json
           if-no-files-found: error
-  prerelease:
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
-    needs: portable
-    runs-on: ubuntu-latest
+  publish:
+    if: needs.portable.outputs.production == 'true'
+    needs: [quality, portable]
+    runs-on: windows-latest
     permissions:
       contents: write
+    env:
+      PYTHONUTF8: '1'
+      QT_QPA_PLATFORM: offscreen
+      BUILD_VERSION: ${{ needs.portable.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v10.3.2
+        with:
+          python-version: '3.14'
+      - uses: actions/download-artifact@v8
         with:
           name: CoreDescriptionW2E-windows-x64
           path: release-files
-      - name: Publish verified prerelease once
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
+      - name: Verify downloaded ZIP, metadata and unpacked frozen EXE again
+        shell: pwsh
         run: |
-          version=$(python -c 'import json; print(json.load(open("release-files/manifest.json"))["version"])')
-          tag="v$version"
-          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
-            echo "Tag/version mismatch"; exit 1
-          fi
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "Release already exists; refusing to replace"; exit 1
-          fi
-          if [[ "$GITHUB_REF" != "refs/tags/$tag" ]] && git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1; then
-            echo "Tag already exists; dispatch refuses to reuse or move it"; exit 1
-          fi
-          gh release create "$tag" release-files/*.zip release-files/*.sha256 release-files/manifest.json --target "$GITHUB_SHA" --prerelease --title "CoreDescriptionW2E $tag (предварительная версия)" --notes-file docs/RELEASE_NOTES.md
+          uv run python scripts/release.py verify --folder release-files --version $env:BUILD_VERSION --commit $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw "Bundle verification failed" }
+          ./scripts/verify_windows.ps1 -Archive "release-files/CoreDescriptionW2E-v$env:BUILD_VERSION-windows-x64.zip" -Version $env:BUILD_VERSION
+      - name: Create unique annotated tag, verify draft assets, publish and download
+        run: uv run python scripts/release.py publish --folder release-files --version $env:BUILD_VERSION --commit $env:GITHUB_SHA

@@ -1,10 +1,13 @@
-Предварительная версия офлайн-конвертера Word → Excel.
+# Development release notes
 
-- CLI и русское окно с фоновым выполнением используют общий сервис.
-- DOC Word 97–2003 и DOCX без установленного Office/LibreOffice.
-- Исходные номера, полный текст, явные интервалы и диагностика неоднозначностей.
-- Шаблон core23-v1, формулы L/M, атомарная запись без неявной перезаписи.
-- ZIP включает заменяемые DLL Qt, лицензии и точные сторонние исходники.
+Production workflow generates versioned notes from the verified source commit and
+recent Git subjects. Releases contain portable ZIP, SHA-256 sidecar and manifest.
 
-Проверьте предупреждения и выполните пользовательскую приёмку на локальных
-данных. Ограничения поддержки описаны в README.
+- Explicit run-header `Проход` now supplies drilled length, alongside `проходка`.
+  Layer prose does not supply run metadata; no depth arithmetic fills missing data.
+- Automatic immutable patch allocation and prerelease publication after Linux/Windows
+  quality gates and clean-unpack frozen GUI/CLI/DOC/DOCX acceptance.
+- Private single-archive handoff with checksums, source fingerprint and typed evidence.
+
+Runtime remains offline, without LLM, OCR, GPU or Office. Unknown values stay blank.
+User visual Excel acceptance is PENDING; formula caches are recalculated by Excel.

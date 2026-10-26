@@ -14,3 +14,18 @@
 - GitHub-репозиторий публичный. Перед `gh repo create` и push проверить `git ls-files`, `.gitignore`, отсутствие файлов из `data/` и секретов.
 - Не использовать force push, удаления чужих репозиториев, переписывание истории Git и неподтверждённые лицензии.
 - PEP 758 в Python 3.14: `except A, B:` — валидная конструкция.
+
+- После КАЖДОГО содержательного Codex-промпта обязательный последний шаг:
+  `uv run python scripts/handoff.py create`, затем
+  `uv run python scripts/handoff.py verify --archive <созданный-архив>`.
+  Даже при частичном результате/ошибках попытаться создать архив с truthful
+  FAIL/BLOCKED/NOT_RUN/PENDING. Нельзя унаследовать старый PASS.
+  Перед этим `uv run python -m scripts.attest --remote` фиксирует команды/tests/API;
+  отсутствие evidence не является PASS. Правила и схема — docs/HANDOFF.md.
+  В финальном ответе дать абсолютные локальные пути tar.xz и .sha256, ID, размер,
+  create/verify status. Архив приватен: никогда не push/upload в GitHub.
+  Нет автоматического hook окончания произвольного промпта: правило исполняет агент.
+  Для GitHub-only операций без локальных изменений допускаются status и пакет по запросу.
+- Production releases только через main workflow с общим queue:max slot;
+  теги/опубликованные assets неизменяемы. PR/diagnostic не расходуют patch.
+  Ручная визуальная приёмка Excel остаётся PENDING до подтверждения пользователя.

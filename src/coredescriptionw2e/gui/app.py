@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from coredescriptionw2e import __version__
 from coredescriptionw2e.domain import ConversionError, ConversionResult
 from coredescriptionw2e.service import convert_batch
 
@@ -57,7 +58,7 @@ class Worker(QThread):
 class Window(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("CoreDescriptionW2E")
+        self.setWindowTitle(f"CoreDescriptionW2E {__version__}")
         self.resize(720, 330)
         self.worker: Worker | None = None
         self.close_after = False
@@ -150,6 +151,10 @@ class Window(QWidget):
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    if args == ["--version"]:
+        from coredescriptionw2e.cli import main as cli_main
+
+        return cli_main(args)
     if "--cli" in args:
         from coredescriptionw2e.cli import main as cli_main
 

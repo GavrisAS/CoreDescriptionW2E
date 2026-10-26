@@ -38,3 +38,10 @@ Thumbs.db
 *.xlsx
 !tests/fixtures/synthetic.doc
 !tests/fixtures/synthetic.docx
+
+# Handoff/evidence and build-only version never enter Git
+/artifacts/handoff/
+/src/coredescriptionw2e/_build_version.py
+.env*
+*.pem
+*.key

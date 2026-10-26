@@ -9,6 +9,7 @@ from docx import Document
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
+from . import __version__
 from .excel.writer import HEADERS
 from .service import convert_batch
 
@@ -141,6 +142,7 @@ def frozen_smoke(folder: Path) -> int:
             json.dumps(
                 {
                     "status": "PASS",
+                    "version": __version__,
                     "documents": 2,
                     "layers_each": 3,
                     "backend": "ms-doc-piece-table+olefile",

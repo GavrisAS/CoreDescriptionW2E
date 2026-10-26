@@ -1,17 +1,21 @@
 # CoreDescriptionW2E
 
+**[Скачать для Windows — GitHub Releases](https://github.com/GavrisAS/CoreDescriptionW2E/releases)**
+
+Предварительные версии: машинные проверки обязательны; визуальная приёмка Excel пользователем ещё ожидается.
+
 Офлайн-перенос русскоязычных описаний керна из DOC/DOCX в копию Excel-шаблона.
 Без LLM, OCR, GPU, телеметрии, сетевых вызовов, Office и LibreOffice при обработке.
 
 ## Windows
 
-Actions → успешный **Windows portable** → artifact `CoreDescriptionW2E-windows-x64`.
-Распакуйте artifact, проверьте SHA-256 вложенного ZIP, распакуйте **весь** portable
-ZIP и запустите `CoreDescriptionW2E.exe`. Python и Office устанавливать не нужно.
-Выберите папку Word и XLSX-шаблон, нажмите **Заполнить**. Интерфейс работает во
-время обработки; «Выход» ожидает её завершения. Статус и предупреждения — в окне.
-Проверенная сборка: [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242).
-Фактические gates и ограничения — в [HANDOFF](docs/HANDOFF.md).
+В Releases скачайте portable ZIP и его `.sha256`, сверьте SHA-256 и распакуйте
+**весь** ZIP в новую папку. Запустите `CoreDescriptionW2E.exe`; Python и Office
+устанавливать не нужно. Выберите папку Word и XLSX-шаблон, нажмите **Заполнить**.
+«Выход» ожидает завершения обработки; статус и предупреждения — в окне.
+Каждая успешная production сборка `main` публикуется автоматически с уникальным
+patch `0.1.P`. [Версионирование и checksum](docs/RELEASE.md),
+[текущие проверяемые evidence и приватный handoff](docs/HANDOFF.md).
 
 Каждый Word создаёт `<папка Word>/output/<stem>.xlsx`. Рекурсии нет; временные
 `~$`-файлы исключаются. Существующие результаты GUI не заменяет: переместите их.

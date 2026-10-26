@@ -1,23 +1,78 @@
-# Windows portable
+# Автоматический Windows portable Release
 
-Собирать PE только на Windows x64, Python 3.14, PowerShell 7:
-`./scripts/build_windows.ps1 -Commit (git rev-parse HEAD)`.
-При локальной сборке без RUNNER_TEMP задайте его временным каталогом.
-Сеть нужна только сборке для uv и проверенных исходников Qt.
+[Скачать Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/releases).
+Каждый push в `main` автоматически запускает production workflow. PR и ручной
+`diagnostic` проверяют сборку без публичного тега/Release. Созданные теги workflow
+не запускают. Все production runs занимают общий concurrency slot с
+`cancel-in-progress: false`, `queue: max`: ожидающие runs сохраняются, до 100.
+[Синтаксис GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax).
+Переполнение очереди или failure не считается успешной производственной сборкой.
 
-Workflow запускает полный Linux/Windows CI, Windows тесты и PyInstaller onedir
-windowed. Только Qt DLL из разрешённых qtbase/qtsvg допускаются в ZIP. Все
-лицензии и точные сторонние исходники включаются в пакет. Это увеличивает ZIP,
-но обеспечивает непосредственный доступ к LGPL source.
+После quality Linux+Windows свежие tags и полный API releases определяют следующий
+`v0.1.P`: максимум занятого patch + 1, либо `v0.1.0`, если линия пуста. Tag без Release
+тоже занимает patch; Release без tag блокирует allocation. Malformed tags и другие
+линии версий не участвуют. Run number не используется. Ошибка до создания тега
+не расходует patch. Ошибка после push тега оставляет занятый tag/draft для аудита;
+следующая новая production операция возьмёт следующий patch. Нельзя двигать теги,
+перезаписывать assets или повторно использовать занятый номер.
 
-После упаковки ZIP распаковывается в чистый каталог с пробелами/кириллицей.
-Рабочая папка вне checkout, PATH содержит только системные каталоги. EXE
-выполняет GUI smoke и настоящий DOC+DOCX → XLSX smoke с проверкой формул,
-текстов и оформления. Timeout каждого запуска 90 секунд. Неуспех блокирует upload.
+Версия фиксируется временным `_build_version.py` **до PyInstaller**, включается в
+EXE, заголовок GUI, CLI `--version` и frozen smoke receipt. В runtime environment
+не участвует. Исходники/pyproject остаются базовой dev-версией `0.1.0`; локальная
+Windows сборка по умолчанию маркируется `0.1.0+local` и не бронирует публичный номер:
 
-Artifact: ZIP, SHA-256, manifest с версией/commit/backend. ZIP содержит приложение,
-DLL, синтетический DOC для smoke, лицензии и исходники. Пользовательских данных нет.
-Release только по `vX.Y.Z` либо workflow_dispatch с `publish=true`, после всех
-проверок. Всегда prerelease до пользовательской приёмки. Тег соответствует
-manifest; существующий Release не заменяется, теги не перемещаются.
-Обычный push создаёт только CI artifact. Для проверки dispatch: `publish=false`.
+```powershell
+./scripts/build_windows.ps1 -Commit (git rev-parse HEAD)
+```
+
+Сборка требует Windows x64, Python 3.14, uv и PowerShell 7. Сеть нужна только
+разработчику/CI для зависимостей и точных проверенных LGPL sources; обработка
+пользовательских документов полностью офлайн. Reader Word 97–2003 не требует
+Office/LibreOffice и внешних декодеров.
+
+Build выполняет quality checks, PyInstaller onedir/windowed, аудит Qt DLL,
+лицензий и точных sources. Из **этого ZIP** выполняются GUI, CLI help/version и
+реальные synthetic DOC+DOCX → XLSX с проверкой формул, W и оформления. Чистый
+каталог с пробелами/кириллицей находится вне checkout, PATH — только системный,
+timeout каждого EXE 90 секунд. Внешний manifest содержит версию, source commit,
+ZIP/EXE SHA-256, frozen receipt. В ZIP есть внутренний manifest с версией/source.
+Publishing job снова проверяет downloaded artifact, внутренний manifest, hash
+и распакованный frozen EXE. Только этому job дано `contents: write`.
+
+Перед тегом повторно проверяются tags/releases и exact checkout SHA. Создаётся
+annotated tag на проверенный `github.sha`, затем draft prerelease с ровно тремя
+assets: `CoreDescriptionW2E-v0.1.P-windows-x64.zip`, его `.sha256`, `manifest.json`.
+API digest и повторное скачивание сверяются до и после публикации. Ошибка — FAIL,
+без замены assets; draft и tag сохраняются для расследования. Публикация, а не
+только успешный build, определяет release gate. Actions artifact остаётся
+диагностическим каналом. Приватные документы и handoff туда никогда не попадают.
+
+Повторить тот же SHA разрешено только **новым явным production dispatch**:
+
+```sh
+gh workflow run windows-build.yml --ref main -f mode=production
+```
+
+Он получает новый patch. Re-run существующего production run (`run_attempt > 1`)
+отклоняется, чтобы не создавать duplicate Release. Для диагностики:
+
+```sh
+gh workflow run windows-build.yml --ref main -f mode=diagnostic
+```
+
+Пока нет ручной визуальной приёмки Excel, версии публикуются как **prerelease**.
+Поэтому README ведёт на `/releases`, не `/releases/latest`. Пользовательская
+приёмка PENDING и ограничения форматов явно указаны в release notes. После
+отдельного подтверждения пользователя можно вручную повысить конкретный выпуск
+до stable без изменения файлов/тега. Машинные tests не заменяют эту приёмку.
+
+Скачайте ZIP и sidecar из одного Release. В PowerShell:
+
+```powershell
+Get-FileHash ./CoreDescriptionW2E-v0.1.P-windows-x64.zip -Algorithm SHA256
+Get-Content ./CoreDescriptionW2E-v0.1.P-windows-x64.zip.sha256
+```
+
+Сопоставьте hex, распакуйте **весь** ZIP в новую папку, запустите EXE. Python и
+Office пользователю устанавливать не нужно. Формулы L/M пересчитывает Excel.
+Ограничения DOC/DOCX и диагностика неизвестных значений перечислены в README.

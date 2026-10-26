@@ -1,53 +1,71 @@
-# Передача для аудита
+# Приватная передача после каждого запроса Codex
 
-Подтверждённые машинные gates реализации приведены ниже. Репозиторий публичный:
-https://github.com/GavrisAS/CoreDescriptionW2E, origin/main.
-Проверенная реализация: `e1f444e837f33b34d3d70eb6277eadd2ba9958f7`.
+После **каждого содержательного запроса Codex** последний обязательный шаг —
+создать и проверить новый локальный handoff. Это относится также к частичным
+результатам и ошибкам: записать FAIL/BLOCKED/NOT_RUN/PENDING и попытаться создать
+пакет. Никакой исторический SHA или число тестов не считается текущим PASS.
+Правило исполняет агент по AGENTS.md; скрипт не обнаруживает окончание произвольного
+промпта автоматически. GitHub-only операции без локальных изменений допускают
+запись статуса и пакет по запросу.
 
-| Проверка | Подтверждённый результат |
-|---|---|
-| uv sync --locked, Ruff lint/format, ty | PASS локально и в GitHub CI |
-| pytest | 40 passed на Linux и Windows |
-| GUI worker | повторный старт запрещён; закрытие ожидает завершения |
-| Локальный приватный Word → XLSX | структура, номера, глубины, W, формулы подтверждены |
-| Независимый импорт локального Word | полный текст совпал без учёта пробельной раскладки |
-| Windows PyInstaller onedir/windowed | PASS на Windows runner |
-| ZIP в чистом Unicode-каталоге, минимальный PATH | GUI, CLI, frozen DOC/DOCX → XLSX PASS |
-| Лицензии и точные сторонние исходники | проверены, включены в ZIP |
-| Приватные данные в публичной истории | отсутствуют; только data/.gitkeep |
+```sh
+uv run python -m scripts.attest --remote
+uv run python scripts/handoff.py create
+uv run python scripts/handoff.py verify --archive artifacts/handoff/<имя>.tar.xz
+```
 
-[CI](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017212)
-и [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242)
-завершились success. [Artifact ZIP+SHA+manifest](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242/artifacts/12661915563).
-Указанные runs проверяют исходную реализацию с 40 тестами. Дополнительно
-добавлены проверки монотонности интервалов долблений и ГИС: локально 42 passed;
-актуальные прогоны доступны в [CI](https://github.com/GavrisAS/CoreDescriptionW2E/actions/workflows/ci.yml)
-и [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/workflows/windows-build.yml).
-Release не создавался: готовый пакет опубликован как CI artifact. Для явного
-prerelease используйте процедуру RELEASE.md; пользовательская приёмка остаётся отдельной.
+`attest` запускает locked sync, Ruff, ty, pytest; записывает exact argv, exit code,
+ОС и версии инструментов без stdout/tracebacks. `--remote` получает факты через
+`gh run view --json` для текущего HEAD и API Releases. Нет доступа — NOT_RUN;
+незавершённый run — PENDING. REMOTE DIRECT EVIDENCE содержит ID, URL, SHA и jobs.
+Publication metadata и downloadable assets проверяет publishing job; для отдельного
+аудита скачайте три assets и сопоставьте SHA. При ошибке helper всё равно попытайтесь
+выполнить create: без актуального evidence gates будут NOT_RUN, а не вымышленный PASS.
+Не передавайте helper секретные аргументы или необезличенные диагностические файлы.
 
-Архитектура: отдельные DOC/DOCX readers → типизированная модель → чистый parser →
-validation → Excel writer. GUI QThread и CLI используют convert_batch.
-Документация связей — ARCHITECTURE.md, схема — writer.HEADERS, команды — TESTING.md.
-Runtime не содержит сетевых вызовов и внешних декодеров DOC. DOC backend —
-самостоятельный MS-DOC piece-table reader + olefile 0.47 (BSD). Qt/PySide/Shiboken
-LGPL поставляются отдельными заменяемыми DLL с полными исходниками/лицензиями.
+`artifacts/handoff-evidence.json` — локальный typed receipt, связанный с fingerprint.
+`create` использует его только при совпадении fingerprint; устаревший evidence
+игнорируется с кодом `stale_evidence_ignored`. Для явного файла есть `--evidence`:
+несовпадение fingerprint отклоняется. Не подставляйте ожидаемые результаты.
+Диагностика допускает только обезличенные коды, количества и ограничения;
+не тексты, интервалы, имена входов или реальные локальные пути.
 
-Приватные входы и результат остаются только в data/. Локальная сводка:
-`data/output/validation-summary.json`; она содержит количества, интервалы и
-проверки без полных описаний, не входит в Git/CI. Все блоки W сверены с источником.
-Часть кратких литологий и метаданных не определена; есть исходные особенности
-нумерации, несовпадение номера в примере шаблона, нераспознанная метка проходки
-и отсутствие конечной отметки одного описания. Они диагностированы; факты не
-исправлялись и примерные значения не подставлялись.
+Результат — **один** `coredescriptionw2e-handoff-<UTC>-<short-sha>-<random-id>.tar.xz`
+и соседний `.tar.xz.sha256` в ignored `artifacts/handoff/`. В финальном ответе
+обязательны абсолютные локальные пути обоих файлов, ID, размер и create/verify status.
+Файлы предназначены для приватного прикрепления в ChatGPT, не GitHub artifacts,
+Releases, issues или Git. Не загружайте их автоматически.
 
-Границы: основной текст Word 97–2003; шифрование, поля DOC, рамки и некоторые
-конструкции DOCX отклоняются. Это текстовый reader, не движок отображения Word.
-Неоднозначное слово с переносом не склеивается. Неизвестные значения пусты.
-Кеши Excel-формул Python не вычисляет; Excel пересчитывает при открытии.
-Ручная визуальная приёмка в Microsoft Excel и приёмка конечным пользователем
-не проводились; это следующий пользовательский шаг, не замена машинных gates.
+Внутри: `manifest.json`, полный `source/` snapshot разрешённых tracked файлов
+и разрешённых untracked исходников; `review/REPORT.md` (A–J), `SOURCE_STATE.json`,
+`GATES.json`, `COMMANDS.json`, `TESTS.json`, `RELEASE.json`, `DIAGNOSTICS.json`,
+`DIFF.patch`, `FILE_MANIFEST.json`. Поля JSON имеют schema_version=1 на уровне
+manifest/source/evidence. HEAD, branch, origin/main, dirty/changes/deleted и список
+SHA/size связывают пакет с фактическим состоянием. Source fingerprint — SHA-256
+канонического JSON (sorted keys, indent=2, UTF-8, LF) отсортированного списка
+`{path,size,sha256}` всех файлов `source/`. Dirty diff включает staged+unstaged
+изменения относительно HEAD; untracked передаются точными файлами snapshot.
+Удалённые tracked файлы отражаются в SOURCE_STATE и patch.
+`FILE_MANIFEST` перечисляет payload до себя, manifest перечисляет payload включая
+FILE_MANIFEST; самоссылок и вложенного source.zip нет.
 
-При смене lockfile повторить проверку точных исходников Qt и состава DLL.
-Никогда не загружать реальные документы, пути, результаты и отчёты в issues,
-публичные fixtures, artifacts или stdout CI. История Git не переписывалась.
+До публикации: allowlist source, denylist private/generated путей, проверка
+секретов/локальных путей, лимиты 4 МиБ/файл и 32 МиБ/payload, запрет symlinks,
+special files, traversal, дубликатов без учёта регистра и опасных TAR-метаданных.
+Разрешены только две синтетические Word fixtures с зафиксированными публичными
+SHA. Их замена требует отдельного аудита и обновления allowlist. Пустой tracked
+`data/.gitkeep` исключается. Qt source bundles, документы/книги/результаты, кеши,
+.git, build/dist и предыдущие архивы не включаются. Сканер — дополнительный барьер:
+передавайте только проверенные исходники и обезличенные receipts, он не способен
+семантически распознать любой секрет или скопированную геологию в произвольном тексте.
+
+Создание: временный архив → внешняя/внутренняя проверка → свежая безопасная
+распаковка → atomic rename. Сначала публикуется проверенный sidecar, затем архив;
+прерывание между ними оставит только sidecar, не непроверенный готовый архив.
+Verify проверяет завершённость XZ, канонический TAR, имена, typed receipts,
+все size/SHA, fingerprint и fresh extract. Любой FAIL возвращает nonzero без
+сырого stdout/traceback. Если privacy gate отклоняет источник, не обходите его:
+исправьте/редактируйте чувствительные данные локально, укажите фактический FAIL.
+
+Перед следующим аудитом проверьте текущие gates в generated review. Ручная
+визуальная приёмка сформированного Excel остаётся отдельным действием пользователя.

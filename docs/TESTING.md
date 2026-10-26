@@ -34,3 +34,11 @@ uv run python scripts/local_validation.py --word data/input.doc --xlsx data/outp
 Формулы проверяются по тексту/адресам, кеш не вычисляется Python. Для ручной
 приёмки откройте локальный результат в Excel, проверьте пересчёт L/M, W и
 предупреждения. Машинная проверка не является визуальной приёмкой в Excel.
+
+
+Дополнительные regression gates: целые метки «Проход»/«проходка» только в шапке
+долбления, allocation patch и конфликты, ZIP/manifest/source/version mismatch,
+ошибка публикации; handoff fresh extract, dirty snapshot/diff, privacy, fixture
+spoofing, traversal/symlink/special files/duplicates, tamper и XZ truncation.
+Число тестов берётся из текущего запуска, не из исторической документации.
+После каждого содержательного Codex-запроса обязательны [create+verify](HANDOFF.md).
