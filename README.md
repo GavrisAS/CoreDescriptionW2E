@@ -10,7 +10,8 @@ Actions → успешный **Windows portable** → artifact `CoreDescriptionW
 ZIP и запустите `CoreDescriptionW2E.exe`. Python и Office устанавливать не нужно.
 Выберите папку Word и XLSX-шаблон, нажмите **Заполнить**. Интерфейс работает во
 время обработки; «Выход» ожидает её завершения. Статус и предупреждения — в окне.
-Наличие workflow само по себе не означает готовности EXE: статус в [HANDOFF](docs/HANDOFF.md).
+Проверенная сборка: [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242).
+Фактические gates и ограничения — в [HANDOFF](docs/HANDOFF.md).
 
 Каждый Word создаёт `<папка Word>/output/<stem>.xlsx`. Рекурсии нет; временные
 `~$`-файлы исключаются. Существующие результаты GUI не заменяет: переместите их.
