@@ -125,3 +125,21 @@ def test_workflow_production_is_queued_and_gated():
     assert "needs: [quality, portable]" in text
     assert "tags:" not in text and "publish:" in text
     assert text.count("contents: write") == 1
+
+
+@pytest.mark.parametrize("remote_type,remote_sha", [("commit", "a" * 40), ("tag", "b" * 40)])
+def test_remote_tag_api_binding(bundle, remote_type, remote_sha):
+    folder, version, commit = bundle
+    tag = "v" + version
+
+    def command(*argv):
+        if argv[:3] == ("git", "rev-list", "-n"):
+            return commit
+        if argv[-1].endswith("/releases/tags/" + tag):
+            return json.dumps({"draft": True, "prerelease": True, "tag_name": tag})
+        if "/git/ref/" in argv[-1]:
+            return json.dumps({"object": {"type": remote_type, "sha": "c" * 40}})
+        return json.dumps({"object": {"type": "commit", "sha": remote_sha}})
+
+    with patch.object(r, "command", command), pytest.raises(ValueError):
+        r.verify_remote(tag, commit, folder, draft=True)

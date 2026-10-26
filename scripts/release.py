@@ -116,7 +116,13 @@ def verify_remote(tag: str, commit: str, folder: Path, *, draft: bool) -> dict:
     if release["draft"] != draft or not release["prerelease"] or release["tag_name"] != tag:
         raise ValueError("Release publication state mismatch")
     if command("git", "rev-list", "-n", "1", tag) != commit:
-        raise ValueError("Tag source mismatch")
+        raise ValueError("Local tag source mismatch")
+    ref = json.loads(command("gh", "api", f"repos/{REPO}/git/ref/tags/{tag}"))["object"]
+    if ref["type"] != "tag":
+        raise ValueError("Expected annotated remote tag")
+    target = json.loads(command("gh", "api", f"repos/{REPO}/git/tags/{ref['sha']}"))["object"]
+    if target["type"] != "commit" or target["sha"] != commit:
+        raise ValueError("Remote API tag source mismatch")
     expected = {p.name: digest(p) for p in folder.iterdir() if p.is_file()}
     if {a["name"] for a in release["assets"]} != set(expected):
         raise ValueError("Unexpected release assets")
