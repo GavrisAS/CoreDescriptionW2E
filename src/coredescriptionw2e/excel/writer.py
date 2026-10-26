@@ -206,7 +206,7 @@ def write_excel(
         with zipfile.ZipFile(temp) as archive:
             if archive.testzip() is not None:
                 raise ConversionError("Не прошла проверка записанного XLSX.")
-        with temp.open("rb") as stream:
+        with temp.open("r+b") as stream:
             os.fsync(stream.fileno())
         publish(temp, output, overwrite)
         return issues

@@ -36,7 +36,7 @@ $previousCwd = Get-Location
 try {
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     Set-Location $clean
-    foreach ($arguments in @(@("--smoke-test"), @("--frozen-smoke", "acceptance"))) {
+    foreach ($arguments in @(@("--smoke-test"), @("--cli", "--help"), @("--frozen-smoke", "acceptance"))) {
         $process = Start-Process -FilePath $exe -ArgumentList $arguments -PassThru
         if (-not $process.WaitForExit(90000)) { $process.Kill(); throw "Frozen smoke timed out" }
         if ($process.ExitCode -ne 0) { throw "Frozen smoke failed: $($process.ExitCode)" }

@@ -117,6 +117,26 @@ def frozen_smoke(folder: Path) -> int:
         for result in results:
             assert result.output is not None
             verify_output(result.output)
+        from .cli import main as cli_main
+
+        cli_output = folder / "cli-output"
+        assert (
+            cli_main(
+                [
+                    "--input-dir",
+                    str(inputs),
+                    "--template",
+                    str(template),
+                    "--output-dir",
+                    str(cli_output),
+                    "--json",
+                ]
+            )
+            == 0
+        )
+        for path in cli_output.glob("*.xlsx"):
+            verify_output(path)
+        assert len(list(cli_output.glob("*.xlsx"))) == 2
         report.write_text(
             json.dumps(
                 {
