@@ -76,3 +76,12 @@ Get-Content ./CoreDescriptionW2E-v0.1.P-windows-x64.zip.sha256
 Сопоставьте hex, распакуйте **весь** ZIP в новую папку, запустите EXE. Python и
 Office пользователю устанавливать не нужно. Формулы L/M пересчитывает Excel.
 Ограничения DOC/DOCX и диагностика неизвестных значений перечислены в README.
+
+
+При инфраструктурной ошибке после upload сохраняются draft и занятый tag.
+После исправления допускается завершить публикацию **того же** draft: сначала
+сверить source SHA через API annotated tag, подтверждённые quality/frozen jobs,
+три assets, SHA и manifest; затем открыть draft и проверить публичные downloads.
+Никаких повторных uploads/замены файлов/retag. Это восстановление незавершённой
+публикации, а не re-run сборки. Draft читается API по ID из списка Releases:
+endpoint `/releases/tags/...` до публикации возвращает 404.

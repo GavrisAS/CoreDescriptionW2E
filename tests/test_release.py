@@ -135,7 +135,9 @@ def test_remote_tag_api_binding(bundle, remote_type, remote_sha):
     def command(*argv):
         if argv[:3] == ("git", "rev-list", "-n"):
             return commit
-        if argv[-1].endswith("/releases/tags/" + tag):
+        if argv[-1].endswith("/releases?per_page=100"):
+            return json.dumps([[{"tag_name": tag, "id": 1}]])
+        if argv[-1].endswith("/releases/1"):
             return json.dumps({"draft": True, "prerelease": True, "tag_name": tag})
         if "/git/ref/" in argv[-1]:
             return json.dumps({"object": {"type": remote_type, "sha": "c" * 40}})
@@ -143,3 +145,40 @@ def test_remote_tag_api_binding(bundle, remote_type, remote_sha):
 
     with patch.object(r, "command", command), pytest.raises(ValueError):
         r.verify_remote(tag, commit, folder, draft=True)
+
+
+def test_draft_id_lookup_and_verified_download(bundle):
+    import shutil
+
+    folder, version, commit = bundle
+    tag = "v" + version
+    calls = []
+    metadata = {
+        "id": 1,
+        "tag_name": tag,
+        "draft": True,
+        "prerelease": True,
+        "assets": [{"name": p.name, "digest": "sha256:" + r.digest(p)} for p in folder.iterdir()],
+    }
+
+    def command(*argv):
+        calls.append(argv)
+        if argv[:2] == ("git", "rev-list"):
+            return commit
+        if argv[:3] == ("gh", "release", "download"):
+            for p in folder.iterdir():
+                shutil.copyfile(p, Path(argv[-1]) / p.name)
+            return ""
+        if argv[-1].endswith("/releases?per_page=100"):
+            return json.dumps([[metadata]])
+        if argv[-1].endswith("/releases/1"):
+            return json.dumps(metadata)
+        if "/git/ref/" in argv[-1]:
+            return json.dumps({"object": {"type": "tag", "sha": "c" * 40}})
+        if "/git/tags/" in argv[-1]:
+            return json.dumps({"object": {"type": "commit", "sha": commit}})
+        raise AssertionError("Unexpected API")
+
+    with patch.object(r, "command", command):
+        assert r.verify_remote(tag, commit, folder, draft=True)["id"] == 1
+    assert not any("/releases/tags/" in arg for call in calls for arg in call)

@@ -112,7 +112,17 @@ def verify_bundle(folder: Path, version: str, commit: str) -> dict:
 
 
 def verify_remote(tag: str, commit: str, folder: Path, *, draft: bool) -> dict:
-    release = json.loads(command("gh", "api", f"repos/{REPO}/releases/tags/{tag}"))
+    if draft:
+        # The tag endpoint excludes unpublished drafts, even for their author.
+        pages = json.loads(
+            command("gh", "api", "--paginate", "--slurp", f"repos/{REPO}/releases?per_page=100")
+        )
+        matches = [r for page in pages for r in page if r["tag_name"] == tag]
+        if len(matches) != 1:
+            raise ValueError("Missing/ambiguous draft release")
+        release = json.loads(command("gh", "api", f"repos/{REPO}/releases/{matches[0]['id']}"))
+    else:
+        release = json.loads(command("gh", "api", f"repos/{REPO}/releases/tags/{tag}"))
     if release["draft"] != draft or not release["prerelease"] or release["tag_name"] != tag:
         raise ValueError("Release publication state mismatch")
     if command("git", "rev-list", "-n", "1", tag) != commit:
