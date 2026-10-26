@@ -18,13 +18,13 @@ uv run python scripts/handoff.py verify --archive artifacts/handoff/<имя>.tar
 ОС и версии инструментов без stdout/tracebacks. `--remote` получает факты через
 `gh run view --json` для текущего HEAD и API Releases. Нет доступа — NOT_RUN;
 незавершённый run — PENDING. REMOTE DIRECT EVIDENCE содержит ID, URL, SHA и jobs.
-Publication metadata и downloadable assets проверяет publishing job; для отдельного
-аудита скачайте три assets и сопоставьте SHA. При ошибке helper всё равно попытайтесь
+Publishing job и attest проверяют публичное скачивание трёх assets, digest и
+ZIP/manifest/source binding; отсутствие проверки не даёт PASS. При ошибке helper всё равно попытайтесь
 выполнить create: без актуального evidence gates будут NOT_RUN, а не вымышленный PASS.
 Не передавайте helper секретные аргументы или необезличенные диагностические файлы.
 
 `artifacts/handoff-evidence.json` — локальный typed receipt, связанный с fingerprint.
-`create` использует его только при совпадении fingerprint; устаревший evidence
+`create` использует его только при совпадении fingerprint и source_head; устаревший evidence
 игнорируется с кодом `stale_evidence_ignored`. Для явного файла есть `--evidence`:
 несовпадение fingerprint отклоняется. Не подставляйте ожидаемые результаты.
 Диагностика допускает только обезличенные коды, количества и ограничения;

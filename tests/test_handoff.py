@@ -57,7 +57,7 @@ def test_fresh_extract_dirty_binding_and_unique_names(repo, tmp_path):
         state = json.loads(read(tar, "review/SOURCE_STATE.json"))
         assert state["dirty"]
         assert b"Changed synthetic" in read(tar, "review/DIFF.patch")
-        assert read(tar, "source/scripts/new.py") == b"VALUE = 1\n"
+        assert read(tar, "source/scripts/new.py") == (repo / "scripts/new.py").read_bytes()
     assert manifest["source_fingerprint"] == h.snapshot(repo)[1]["source_fingerprint"]
 
 
@@ -207,7 +207,29 @@ def test_failed_gate_still_produces_package(repo, tmp_path):
     evidence = tmp_path / "evidence.json"
     evidence.write_bytes(
         h.encode(
-            {"source_fingerprint": h.snapshot(repo)[1]["source_fingerprint"], "receipts": receipts}
+            {
+                "source_fingerprint": h.snapshot(repo)[1]["source_fingerprint"],
+                "source_head": h.snapshot(repo)[1]["head"],
+                "receipts": receipts,
+            }
         )
     )
     assert h.verify(h.create(repo, tmp_path / "packages", evidence))["head"]
+
+
+def test_evidence_cannot_cross_head_with_identical_source(repo, tmp_path):
+    state = h.snapshot(repo)[1]
+    evidence = tmp_path / "evidence.json"
+    evidence.write_bytes(
+        h.encode(
+            {
+                "source_fingerprint": state["source_fingerprint"],
+                "source_head": state["head"],
+                "receipts": h.default_receipts(),
+            }
+        )
+    )
+    git(repo, "commit", "--allow-empty", "-m", "new source identity")
+    assert h.snapshot(repo)[1]["source_fingerprint"] == state["source_fingerprint"]
+    with pytest.raises(h.Unsafe):
+        h.create(repo, tmp_path / "packages", evidence)

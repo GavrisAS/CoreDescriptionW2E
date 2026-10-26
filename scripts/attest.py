@@ -6,10 +6,13 @@ import os
 import platform
 import re
 import subprocess
+import tempfile
+import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts.handoff import default_receipts, encode, snapshot
+from scripts.release import digest, verify_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = "GavrisAS/CoreDescriptionW2E"
@@ -116,6 +119,29 @@ def remote(receipts: dict, head: str) -> None:
         if {a["name"] for a in assets} != expected or not all(a.get("digest") for a in assets):
             receipts["GATES"]["RELEASE"] = {"status": "FAIL", "evidence": [release["html_url"]]}
             continue
+        try:
+            with tempfile.TemporaryDirectory(prefix="w2e-public-assets-") as temp:
+                folder = Path(temp)
+                for asset in assets:
+                    with urllib.request.urlopen(
+                        asset["browser_download_url"], timeout=120
+                    ) as stream:
+                        destination = folder / asset["name"]
+                        with destination.open("wb") as output_file:
+                            while chunk := stream.read(1024 * 1024):
+                                output_file.write(chunk)
+                    if "sha256:" + digest(destination) != asset["digest"]:
+                        raise ValueError("Public asset digest mismatch")
+                verify_bundle(folder, version, head)
+        except Exception:
+            receipts["GATES"]["RELEASE"] = {"status": "FAIL", "evidence": [release["html_url"]]}
+            receipts["RELEASE"] = {
+                "status": "FAIL",
+                "publication": "PUBLISHED_UNVERIFIED",
+                "url": release["html_url"],
+                "source_sha": head,
+            }
+            break
         receipts["RELEASE"] = {
             "status": "PASS",
             "publication": "PUBLISHED",
@@ -129,7 +155,7 @@ def remote(receipts: dict, head: str) -> None:
                 {k: a[k] for k in ("name", "size", "digest", "browser_download_url")}
                 for a in assets
             ],
-            "verification": "API metadata; see publish job for downloaded hashes",
+            "verification": "Public unauthenticated downloads, asset SHA, ZIP/manifest/source binding",
         }
         receipts["GATES"]["RELEASE"] = {
             "status": "PASS",
@@ -188,6 +214,7 @@ def main() -> int:
     evidence = {
         "schema_version": 1,
         "source_fingerprint": state["source_fingerprint"],
+        "source_head": state["head"],
         "receipts": receipts,
     }
     destination = ROOT / "artifacts/handoff-evidence.json"

@@ -460,13 +460,19 @@ def create(root: Path, output: Path, evidence: Path | None = None) -> Path:
     automatic = root / "artifacts/handoff-evidence.json"
     if evidence is None and automatic.is_file():
         candidate = json.loads(automatic.read_text(encoding="utf-8"))
-        if candidate.get("source_fingerprint") == state["source_fingerprint"]:
+        if (
+            candidate.get("source_fingerprint") == state["source_fingerprint"]
+            and candidate.get("source_head") == state["head"]
+        ):
             evidence = automatic
         else:
             receipts["DIAGNOSTICS"]["codes"]["stale_evidence_ignored"] = 1
     if evidence:
         supplied = json.loads(evidence.read_text(encoding="utf-8"))
-        if supplied.get("source_fingerprint") != state["source_fingerprint"]:
+        if (
+            supplied.get("source_fingerprint") != state["source_fingerprint"]
+            or supplied.get("source_head") != state["head"]
+        ):
             raise Unsafe("Stale evidence/source fingerprint")
         receipts = supplied["receipts"]
     validate_receipts(receipts)

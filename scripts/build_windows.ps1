@@ -5,6 +5,9 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 if (-not $IsWindows) { throw "Windows packaging requires Windows" }
+if (-not $Version.EndsWith("+local") -and $env:GITHUB_ACTIONS -ne "true") {
+    throw "Unreserved local builds must use +local version"
+}
 Set-Location (Split-Path $PSScriptRoot -Parent)
 function Run-UV {
     & uv @args
