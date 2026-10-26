@@ -1,0 +1,40 @@
+# Sensitive local inputs and generated results: never commit
+/data/**
+!/data/.gitkeep
+/outputs/
+/output/
+*.log
+*.tmp
+*.bak
+
+# Python / tooling
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ty_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build and local artifacts
+/build/
+/dist/
+*.egg-info/
+*.spec
+/artifacts/
+/reports/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Documents are private; only explicitly audited synthetic fixtures are public
+*.doc
+*.docx
+*.xlsx
+!tests/fixtures/synthetic.doc
+!tests/fixtures/synthetic.docx
