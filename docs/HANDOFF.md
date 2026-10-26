@@ -1,6 +1,6 @@
 # Передача для аудита
 
-Машинные gates реализации пройдены. Репозиторий публичный:
+Подтверждённые машинные gates реализации приведены ниже. Репозиторий публичный:
 https://github.com/GavrisAS/CoreDescriptionW2E, origin/main.
 Проверенная реализация: `e1f444e837f33b34d3d70eb6277eadd2ba9958f7`.
 
@@ -19,7 +19,10 @@ https://github.com/GavrisAS/CoreDescriptionW2E, origin/main.
 [CI](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017212)
 и [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242)
 завершились success. [Artifact ZIP+SHA+manifest](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242/artifacts/12661915563).
-Следующий коммит обновляет только документацию; указанные runs проверяют всю реализацию.
+Указанные runs проверяют исходную реализацию с 40 тестами. Дополнительно
+добавлены проверки монотонности интервалов долблений и ГИС: локально 42 passed;
+актуальные прогоны доступны в [CI](https://github.com/GavrisAS/CoreDescriptionW2E/actions/workflows/ci.yml)
+и [Windows portable](https://github.com/GavrisAS/CoreDescriptionW2E/actions/workflows/windows-build.yml).
 Release не создавался: готовый пакет опубликован как CI artifact. Для явного
 prerelease используйте процедуру RELEASE.md; пользовательская приёмка остаётся отдельной.
 

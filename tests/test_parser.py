@@ -108,3 +108,17 @@ def test_mixed_inflected_lithology_is_not_reduced_to_one_rock():
         ]
     )
     assert result.layers[0].lithology is None
+
+
+def test_gis_overlap_is_critical():
+    lines = list(SYNTHETIC)
+    lines[9] = "Слой 3. 102-103м (101-102м)"
+    result = parse_lines(lines)
+    assert result.has_errors and "gis_overlap" in [i.code for i in result.issues]
+
+
+def test_run_depths_cannot_move_backwards():
+    lines = list(SYNTHETIC)
+    lines[14] = "Инт:102-105м – по бурению"
+    result = parse_lines(lines)
+    assert result.has_errors and "run_overlap" in [i.code for i in result.issues]

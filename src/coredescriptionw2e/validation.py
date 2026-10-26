@@ -31,12 +31,22 @@ def validate(result: ParseResult) -> list[ParseIssue]:
         None,
     )
     seen_runs: set[int] = set()
+    previous_run: DepthInterval | None = None
     for run in result.runs:
         if run.number in seen_runs:
             issue("duplicate_run", "Повторяется номер долбления.", run.source, True)
         seen_runs.add(run.number)
         check(run.drilling, "долбление/бурение", run.source)
         check(run.gis, "долбление/ГИС", run.source)
+        if run.drilling:
+            if previous_run and run.drilling.top < previous_run.bottom - TOLERANCE:
+                issue(
+                    "run_overlap",
+                    "Интервалы долблений перекрываются или идут назад.",
+                    run.source,
+                    True,
+                )
+            previous_run = run.drilling
         if run.drilled is None or run.recovered is None:
             issue(
                 "missing_recovery",
@@ -62,6 +72,7 @@ def validate(result: ParseResult) -> list[ParseIssue]:
             )
         seen: set[int] = set()
         previous = None
+        previous_gis: DepthInterval | None = None
         previous_number = 0
         for layer in run.layers:
             if layer.number in seen:
@@ -81,6 +92,15 @@ def validate(result: ParseResult) -> list[ParseIssue]:
             previous_number = layer.number
             check(layer.drilling, "слой/бурение", layer.source)
             check(layer.gis, "слой/ГИС", layer.source)
+            if layer.gis:
+                if previous_gis and layer.gis.top < previous_gis.bottom - TOLERANCE:
+                    issue(
+                        "gis_overlap",
+                        "Интервалы слоёв по ГИС перекрываются или идут назад.",
+                        layer.source,
+                        True,
+                    )
+                previous_gis = layer.gis
             if not layer.stratum:
                 issue(
                     "missing_stratum", "Нет предшествующего явного заголовка пласта.", layer.source
