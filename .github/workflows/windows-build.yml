@@ -62,4 +62,7 @@ jobs:
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "Release already exists; refusing to replace"; exit 1
           fi
+          if [[ "$GITHUB_REF" != "refs/tags/$tag" ]] && git ls-remote --exit-code origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Tag already exists; dispatch refuses to reuse or move it"; exit 1
+          fi
           gh release create "$tag" release-files/*.zip release-files/*.sha256 release-files/manifest.json --target "$GITHUB_SHA" --prerelease --title "CoreDescriptionW2E $tag (предварительная версия)" --notes-file docs/RELEASE_NOTES.md

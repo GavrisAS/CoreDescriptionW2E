@@ -21,7 +21,7 @@ https://github.com/GavrisAS/CoreDescriptionW2E, origin/main.
 завершились success. [Artifact ZIP+SHA+manifest](https://github.com/GavrisAS/CoreDescriptionW2E/actions/runs/40346017242/artifacts/12661915563).
 Следующий коммит обновляет только документацию; указанные runs проверяют всю реализацию.
 Release не создавался: готовый пакет опубликован как CI artifact. Для явного
-prerelease используйте процедуру RELEASE.md после пользовательской приёмки.
+prerelease используйте процедуру RELEASE.md; пользовательская приёмка остаётся отдельной.
 
 Архитектура: отдельные DOC/DOCX readers → типизированная модель → чистый parser →
 validation → Excel writer. GUI QThread и CLI используют convert_batch.
