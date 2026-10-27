@@ -1,13 +1,14 @@
 """DOCX paragraphs and nested table cells in XML order, without link resolution."""
 
 import zipfile
+from dataclasses import replace
 from pathlib import Path
 
 from docx import Document
 from docx.oxml.ns import qn
 from lxml import etree
 
-from coredescriptionw2e.domain import ConversionError, ImportedDocument
+from coredescriptionw2e.domain import ConversionError, ImportedDocument, SourceRef, SourceRow
 
 from .common import MAX_FILE_BYTES, check_file, make_document
 
@@ -47,7 +48,36 @@ def read_docx(path: Path) -> ImportedDocument:
             position = element.getroottree().getpath(element)
             # A manual Word line break remains a source boundary.
             entries.extend((f"{position}/line:{i}", line) for i, line in enumerate(raw.split("\n")))
-        return make_document(path, entries, "\n".join(value for _, value in entries))
+        result = make_document(path, entries, "\n".join(value for _, value in entries))
+        from .tables import cell
+
+        cell_roles = {}
+        for n, row in enumerate(body.iter(qn("w:tr"))):
+            position = row.getroottree().getpath(row)
+            cells = []
+            physical_cells = row.findall(qn("w:tc"))
+            for column, tc in enumerate(physical_cells):
+                # Entries already preserve tabs/manual line breaks. Read physical
+                # cells, not python-docx's duplicated proxies for merged cells.
+                prefix = tc.getroottree().getpath(tc) + "/"
+                cell_roles[prefix] = "LAST" if column == len(physical_cells) - 1 else "OTHER"
+                raw = "\n".join(value for pos, value in entries if pos.startswith(prefix))
+                cells.append(cell(path.name, f"{position}/cell:{column}", n, raw))
+            result.table_rows.append(SourceRow(SourceRef(path.name, position, n), cells))
+        result.blocks = [
+            replace(
+                block,
+                source=replace(block.source, cell_id=prefix[:-1], cell_role=cell_roles[prefix]),
+            )
+            if (
+                prefix := next(
+                    (p for p in reversed(cell_roles) if block.source.position.startswith(p)), None
+                )
+            )
+            else block
+            for block in result.blocks
+        ]
+        return result
     except (zipfile.BadZipFile, KeyError, ValueError, etree.XMLSyntaxError) as exc:
         raise ConversionError(
             "DOCX: повреждённый или неподдерживаемый документ.", code="invalid_docx"

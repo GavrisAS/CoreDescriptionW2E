@@ -68,6 +68,10 @@ def bundle(tmp_path):
             "version": version,
             "documents": 2,
             "layers_each": 3,
+            "core_interval_records": 3,
+            "review_documents": 2,
+            "core_interval_gate": "PASS",
+            "review_policy_gate": "PASS",
         },
     }
     with zipfile.ZipFile(tmp_path / name, "w") as z:

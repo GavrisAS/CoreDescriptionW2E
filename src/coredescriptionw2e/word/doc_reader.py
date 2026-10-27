@@ -1,18 +1,20 @@
 """Word 97–2003 main story, using MS-DOC FIB/CLX/PlcPcd (not byte scanning).
 
 Only OLE and the piece table are interpreted. VBA, fields, images and links are
-never executed. Word 6/95, encryption and text boxes fail closed.
+never executed. Word 6/95, encryption and nonempty text boxes fail closed.
 """
 
 import re
 import struct
+from bisect import bisect_right
+from dataclasses import replace
 from pathlib import Path
 
 import olefile
 
-from coredescriptionw2e.domain import ConversionError, ImportedDocument, ParseIssue
+from coredescriptionw2e.domain import ConversionError, ImportedDocument, ParseIssue, TextBlock
 
-from .common import MAX_FILE_BYTES, MAX_TEXT_CHARS, check_file, make_document
+from .common import MAX_BLOCKS, MAX_FILE_BYTES, MAX_TEXT_CHARS, check_file, make_document
 
 
 def _slice(data: bytes, offset: int, length: int) -> bytes:
@@ -44,11 +46,11 @@ def extract_main_story(word: bytes, table: bytes) -> str:
     main_length = _u32(word, pos + 3 * 4)
     if main_length > MAX_TEXT_CHARS:
         raise ConversionError("DOC: превышен лимит основного текста.")
-    if _u32(word, pos + 9 * 4):
-        raise ConversionError(
-            "DOC: текстовые рамки требуют ручной проверки; импорт остановлен.",
-            code="unsupported_doc_textbox",
-        )
+    story_lengths = [_u32(word, pos + i * 4) for i in range(3, 11)]
+    has_boxes = bool(story_lengths[6] or story_lengths[7])
+    required_length = sum(story_lengths) if has_boxes else main_length
+    if required_length > MAX_TEXT_CHARS:
+        raise ConversionError("DOC: превышен лимит stories.")
     cb_mac = _u32(word, pos)
     if cb_mac > len(word):
         raise ConversionError("DOC: повреждён размер WordDocument.")
@@ -58,6 +60,7 @@ def extract_main_story(word: bytes, table: bytes) -> str:
     pos += 2
     if pair_count <= 33:
         raise ConversionError("DOC: отсутствует таблица фрагментов.")
+    pairs_pos = pos
     clx = _slice(table, _u32(word, pos + 33 * 8), _u32(word, pos + 33 * 8 + 4))
     pos = 0
     while pos < len(clx) and clx[pos] == 1:
@@ -73,15 +76,15 @@ def extract_main_story(word: bytes, table: bytes) -> str:
     cps = [_u32(plc, i * 4) for i in range(count + 1)]
     if (
         cps[0] != 0
-        or cps[-1] < main_length
+        or cps[-1] < required_length
         or any(a >= b for a, b in zip(cps, cps[1:], strict=False))
     ):
         raise ConversionError("DOC: нарушен порядок символьных позиций.")
     chunks: list[bytes] = []
     for i in range(count):
-        if cps[i] >= main_length:
+        if cps[i] >= required_length:
             break
-        length = min(cps[i + 1], main_length) - cps[i]
+        length = min(cps[i + 1], required_length) - cps[i]
         fc = _u32(plc, 4 * (count + 1) + i * 8 + 2)
         offset = fc & 0x3FFFFFFF
         if fc & 0x40000000:
@@ -94,9 +97,54 @@ def extract_main_story(word: bytes, table: bytes) -> str:
         else:
             chunks.append(_slice(word, offset, length * 2))
     try:
-        return b"".join(chunks).decode("utf-16-le", errors="strict")
+        encoded = b"".join(chunks)
+        if has_boxes:
+            if pair_count <= 59:
+                raise ConversionError(
+                    "DOC: отсутствуют таблицы рамок.", code="unsupported_doc_textbox"
+                )
+            start_cp = sum(story_lengths[:6])
+            for story_index, pair_index in ((6, 56), (7, 58)):
+                length = story_lengths[story_index]
+                fc = _u32(word, pairs_pos + pair_index * 8)
+                lcb = _u32(word, pairs_pos + pair_index * 8 + 4)
+                if bool(length) != bool(lcb):
+                    raise ConversionError(
+                        "DOC: несогласованные границы рамок.", code="unsupported_doc_textbox"
+                    )
+                if length:
+                    frame_text = encoded[start_cp * 2 : (start_cp + length) * 2].decode(
+                        "utf-16-le", errors="strict"
+                    )
+                    _check_empty_textboxes(frame_text, _slice(table, fc, lcb))
+                    # Field instructions/linked results are outside this proof.
+                    if _u32(word, pairs_pos + (pair_index + 1) * 8 + 4):
+                        raise ConversionError("DOC: поля в рамках.", code="unsupported_doc_textbox")
+                start_cp += length
+        return encoded[: main_length * 2].decode("utf-16-le", errors="strict")
     except UnicodeError as exc:
         raise ConversionError("DOC: некорректный Unicode в тексте.") from exc
+
+
+def _check_empty_textboxes(text: str, plc: bytes) -> None:
+    """Exhaustive story coverage: only paragraph marks, including ignored tail.
+
+    PlcftxbxTxt has 22-byte FTXBXS entries. The final range is ignored by
+    MS-DOC; its terminal CP may exceed ccpTxbx. Every actual range is bounded.
+    With no content to order, shape-anchor reconstruction is unnecessary.
+    """
+    if not text or any(c != "\r" for c in text) or len(plc) < 30 or (len(plc) - 4) % 26:
+        raise ConversionError(
+            "DOC: непустые или недоказанные рамки требуют проверки.", code="unsupported_doc_textbox"
+        )
+    count = (len(plc) - 4) // 26
+    cps = [_u32(plc, i * 4) for i in range(count + 1)]
+    if (
+        cps[0] != 0
+        or any(a >= b for a, b in zip(cps, cps[1:], strict=False))
+        or any(cp > len(text) for cp in cps[:-1])
+    ):
+        raise ConversionError("DOC: некорректные диапазоны рамок.", code="unsupported_doc_textbox")
 
 
 _CP1252_SPECIAL = set(range(0x82, 0x8D)) | set(range(0x91, 0x9D)) | {0x8E, 0x9E, 0x9F}
@@ -127,6 +175,14 @@ def read_doc(path: Path) -> ImportedDocument:
     for match in re.finditer(r"[^\r\x07\x0b\x0c]+", raw):
         entries.append((f"cp:{match.start()}-{match.end()}", match.group()))
     result = make_document(path, entries, raw)
+    from .tables import binary_core_rows
+
+    result.table_rows = binary_core_rows(path.name, raw)
+    result.blocks = attach_cell_sources(result.blocks, raw)
+    result.reader_facts = {
+        "main_cp": len(raw.encode("utf-16-le")) // 2,
+        "textbox_policy": "paragraph-marks-only; full-story-and-PLCF-check",
+    }
     result.issues.append(
         ParseIssue(
             "doc_main_story",
@@ -134,3 +190,33 @@ def read_doc(path: Path) -> ImportedDocument:
         )
     )
     return result
+
+
+def attach_cell_sources(source_blocks: list[TextBlock], raw: str) -> list[TextBlock]:
+    # CP-delimited physical cells prevent side columns (e.g. sample labels)
+    # from becoming the tail of the preceding description.
+    spans = []
+    row_start = 0
+    for marker in re.finditer(r"\x07\x07", raw):
+        start_cp = row_start
+        separators = [m.start() for m in re.finditer(r"\x07", raw[row_start : marker.end() - 1])]
+        for index, offset in enumerate(separators):
+            end_cp = row_start + offset
+            spans.append((start_cp, end_cp, "LAST" if index == len(separators) - 1 else "OTHER"))
+            start_cp = end_cp + 1
+        row_start = marker.end()
+    if len(spans) > MAX_BLOCKS:
+        raise ConversionError("DOC: слишком много ячеек.")
+    starts = [a for a, _, _ in spans]
+    blocks = []
+    for block in source_blocks:
+        cp = int(block.source.position.split(":")[1].split("-")[0])
+        index = bisect_right(starts, cp) - 1
+        match_span = spans[index] if index >= 0 and cp < spans[index][1] else None
+        if match_span:
+            a, b, role = match_span
+            block = replace(
+                block, source=replace(block.source, cell_id=f"cp-cell:{a}-{b}", cell_role=role)
+            )
+        blocks.append(block)
+    return blocks

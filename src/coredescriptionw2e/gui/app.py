@@ -24,7 +24,7 @@ from coredescriptionw2e.service import convert_batch
 
 class Worker(QThread):
     progress = Signal(int, int, str)
-    completed = Signal(int, int, int, str)
+    completed = Signal(int, int, int, int, str)
 
     def __init__(self, folder: Path, template: Path, parent: QWidget) -> None:
         super().__init__(parent)
@@ -36,7 +36,8 @@ class Worker(QThread):
         self.progress.emit(
             count,
             total,
-            f"{result.source.name} ({count}/{total}): {result.status}"
+            f"{result.source.name} ({count}/{total}): {'ТРЕБУЕТ ПРОВЕРКИ' if result.status == 'review_required' else result.status}; проблем: {len(result.issues)}"
+            + (f"; книга: {result.output}" if result.output else "")
             + ("; " + "; ".join(errors) if errors else ""),
         )
 
@@ -45,14 +46,15 @@ class Worker(QThread):
             results = convert_batch(self.folder, self.template, progress=self.update)
             success = sum(r.status == "success" for r in results)
             warnings = sum(i.severity == "warning" for r in results for i in r.issues)
-            self.completed.emit(success, len(results) - success, warnings, "")
+            review = sum(r.status == "review_required" for r in results)
+            self.completed.emit(success, review, len(results) - success - review, warnings, "")
         except (ConversionError, OSError) as exc:
             self.completed.emit(
-                0, 1, 0, str(exc) if isinstance(exc, ConversionError) else "Пути недоступны."
+                0, 0, 1, 0, str(exc) if isinstance(exc, ConversionError) else "Пути недоступны."
             )
         except Exception:
             # Qt must always deliver completion, even for an unexpected bug.
-            self.completed.emit(0, 1, 0, "Внутренняя ошибка; обработка остановлена.")
+            self.completed.emit(0, 0, 1, 0, "Внутренняя ошибка; обработка остановлена.")
 
 
 class Window(QWidget):
@@ -123,10 +125,11 @@ class Window(QWidget):
         self.bar.setValue(value)
         self.details.append(text)
 
-    @Slot(int, int, int, str)
-    def complete(self, success: int, errors: int, warnings: int, message: str) -> None:
+    @Slot(int, int, int, int, str)
+    def complete(self, success: int, review: int, errors: int, warnings: int, message: str) -> None:
         self.status.setText(
-            message or f"Готово: {success}; ошибок файлов: {errors}; предупреждений: {warnings}."
+            message
+            or f"PASS: {success}; ТРЕБУЕТ ПРОВЕРКИ: {review}; ошибок: {errors}; предупреждений: {warnings}."
         )
         self.bar.setRange(0, 1)
         self.bar.setValue(1)

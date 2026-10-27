@@ -37,3 +37,36 @@ verify_output(Path(sys.argv[1]) / 'output' / 'Учебный.xlsx')
         timeout=25,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
+
+
+def test_gui_review_is_not_counted_as_pass_or_error(sample):
+    from coredescriptionw2e.smoke import create_core_docx
+
+    folder, word, template = sample
+    create_core_docx(word)
+    code = """
+import sys
+from pathlib import Path
+from PySide6.QtWidgets import QApplication
+from coredescriptionw2e.gui.app import Window, Worker
+app = QApplication([])
+window = Window()
+worker = Worker(Path(sys.argv[1]), Path(sys.argv[2]), window)
+updates, completed = [], []
+worker.progress.connect(lambda n, total, text: updates.append(text))
+worker.completed.connect(lambda *args: completed.append(args))
+worker.run()
+assert len(updates) == 1 and 'ТРЕБУЕТ ПРОВЕРКИ' in updates[0]
+assert 'review' in updates[0] and 'книга:' in updates[0]
+assert completed[0][:3] == (0, 1, 0)
+window.complete(*completed[0])
+assert 'ТРЕБУЕТ ПРОВЕРКИ: 1' in window.status.text()
+assert 'ошибок: 0' in window.status.text()
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(folder), str(template)],
+        capture_output=True,
+        env=dict(os.environ, QT_QPA_PLATFORM="offscreen"),
+        timeout=25,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")

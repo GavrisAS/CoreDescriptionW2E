@@ -149,7 +149,7 @@ def test_unsupported_layout_isolated_and_safe(multi_sample, header):
         folder, template, progress=lambda n, total, r: progress.append((n, total))
     )
     bad = next(r for r in results if r.source == unsupported)
-    assert bad.status == "error" and bad.output is None
+    assert bad.status == "unsupported" and bad.output is None
     assert "unsupported_core_layout" in {i.code for i in bad.issues}
     assert not (folder / "output" / "unsupported.xlsx").exists()
     assert len(results) == 2 and progress == [(1, 2), (2, 2)]

@@ -85,6 +85,10 @@ def verify_bundle(folder: Path, version: str, commit: str) -> dict:
             "version": version,
             "documents": 2,
             "layers_each": 3,
+            "core_interval_records": 3,
+            "review_documents": 2,
+            "core_interval_gate": "PASS",
+            "review_policy_gate": "PASS",
         }.items()
     ):
         raise ValueError("Missing frozen acceptance")
@@ -181,7 +185,8 @@ def publish(folder: Path, version: str, commit: str, run_url: str) -> None:
             f"Локально / без LLM / без Office.\n\nSource: `{commit}`\n\n"
             f"[Проверенный workflow]({run_url})\n\n{changes}\n\n"
             "Предварительный выпуск: визуальная приёмка Excel пользователем PENDING. "
-            "DOC: основной текст Word 97–2003 без шифрования/полей/рамок; "
+            "CORE_INTERVAL: целые записи керна, без выдуманных глубин слоёв; REVIEW_REQUIRED с отдельным Контроль. "
+            "DOC: основной текст Word 97–2003 без шифрования/полей; только доказанно пустые рамки; "
             "DOCX: без рамок/altChunk/исправлений. Неизвестные значения пусты; "
             "формулы пересчитывает Excel. См. README и docs/RELEASE.md.\n",
             encoding="utf-8",

@@ -3,6 +3,7 @@
 import unicodedata
 from collections import Counter
 from collections.abc import Callable
+from decimal import Decimal
 from pathlib import Path
 
 from .domain import ConversionError, ConversionResult, ParseIssue
@@ -41,6 +42,8 @@ def convert_batch(
     *,
     overwrite: bool = False,
     progress: Progress | None = None,
+    review_dir: Path | None = None,
+    percent_tolerance: Decimal = Decimal("0.5"),
 ) -> list[ConversionResult]:
     output_dir = output_dir or input_dir / "output"
     if not template.is_file() or template.suffix.casefold() != ".xlsx":
@@ -74,28 +77,49 @@ def convert_batch(
                 *(f"LPT{i}" for i in range(1, 10)),
             }:
                 raise ConversionError("Зарезервированное имя Windows.")
+            parsed = parse_document(read_word(path), percent_tolerance=percent_tolerance)
+            issues = list(parsed.issues)
+            if not parsed.exportable:
+                raise ConversionError("Критические ошибки разбора; результат не опубликован.")
+            if parsed.status == "REVIEW_REQUIRED":
+                output = (review_dir or output_dir / "review") / f"{path.stem}.xlsx"
+            if output.parent.resolve() == input_dir.resolve():
+                raise ConversionError("Выходной каталог должен отличаться от папки Word.")
             if output.exists() and not overwrite:
                 raise ConversionError(
                     "Результат уже существует; используйте отдельную папку или явный --overwrite."
                 )
-            if output_dir.is_dir() and any(
+            if output.parent.is_dir() and any(
                 item.suffix.casefold() == ".xlsx"
                 and name_key(item) == name_key(path)
                 and item.name != output.name
-                for item in output_dir.iterdir()
+                for item in output.parent.iterdir()
             ):
                 raise ConversionError(
                     "Результат конфликтует с существующим именем по регистру или Unicode."
                 )
-            parsed = parse_document(read_word(path))
-            issues = list(parsed.issues)
-            if parsed.has_errors:
-                raise ConversionError("Критические ошибки разбора; результат не опубликован.")
             issues.extend(write_excel(parsed, template, path, output, overwrite=overwrite))
-            result = ConversionResult(path, output, "success", issues, parsed)
+            result = ConversionResult(
+                path,
+                output,
+                "review_required" if parsed.status == "REVIEW_REQUIRED" else "success",
+                issues,
+                parsed,
+            )
         except ConversionError as exc:
             issues.append(ParseIssue(exc.code, str(exc), "error"))
-            result = ConversionResult(path, None, "error", issues, parsed)
+            result = ConversionResult(
+                path,
+                None,
+                "unsupported"
+                if (
+                    (parsed is not None and parsed.status == "UNSUPPORTED")
+                    or exc.code.startswith("unsupported_doc")
+                )
+                else "error",
+                issues,
+                parsed,
+            )
         except (OSError, ValueError, KeyError, TypeError) as exc:
             # Never include exception text: libraries may quote private source text/paths.
             message = "Файл недоступен, заблокирован или повреждён."
@@ -120,12 +144,23 @@ def result_summary(result: ConversionResult) -> dict[str, object]:
     return {
         "file": result.source.name,
         "status": result.status,
+        "document_status": {
+            "success": "PASS",
+            "review_required": "REVIEW_REQUIRED",
+            "unsupported": "UNSUPPORTED",
+            "error": "ERROR",
+        }[result.status],
+        "output": str(result.output) if result.output else None,
+        "mode": result.parsed.mode if result.parsed else None,
+        "core_records": len(result.parsed.cores) if result.parsed else 0,
+        "no_core_intervals": len(result.parsed.no_core) if result.parsed else 0,
         "runs": len(result.parsed.runs) if result.parsed else 0,
         "layers": len(result.parsed.layers) if result.parsed else 0,
         "issues": [
             {
                 "code": i.code,
                 "severity": i.severity,
+                "category": i.category,
                 "message": i.message,
                 "position": i.source.position if i.source else None,
             }

@@ -109,6 +109,69 @@ def verify_output(path: Path) -> None:
         workbook.close()
 
 
+def create_core_docx(path: Path) -> None:
+    """Invented rows exercise IDs, duplicate preservation, no core and percentages."""
+    doc = Document()
+    doc.add_paragraph("Скв. SYN-CORE; Месторождение: Учебное")
+    table = doc.add_table(rows=0, cols=2)
+    for number, top, drilled, recovered, percentage, description in (
+        (1, 10, 2, 1, 50, "Верх: песчаник учебный.\nНиз: аргиллит учебный."),
+        (2, 12, 2, 2, 1005, "=1+1; Алевролит вымышленный."),
+        (2, 12, 2, 2, 100, "Повтор физической записи. Все строки сохраняются."),
+    ):
+        left, right = table.add_row().cells
+        left.text = f"Керн № {number}\nИнт. {top}–{top + drilled} м\nпроходка {drilled} м\nл.в.к. {recovered} м\n% выноса {percentage}"
+        right.text = description
+    for top, bottom, text in (
+        (14, 16, "Бурение без керна."),
+        (16, 17, "Бурение без отбора керна."),
+    ):
+        left, right = table.add_row().cells
+        left.text = f"Инт. {top}–{bottom} м"
+        right.text = text
+    doc.add_paragraph("Общая проходка с отбором керна – 4 м")
+    doc.add_paragraph("Линейный вынос керна – 3 м")
+    doc.save(str(path))
+
+
+def verify_review(path: Path, *, core: bool) -> None:
+    book = load_workbook(path)
+    try:
+        main = book["Лист1"]
+        assert main.max_row == 4
+        assert book.active.title == "Контроль"
+        assert "ТРЕБУЕТ ПРОВЕРКИ" in book["Контроль"]["A1"].value
+        if core:
+            assert [main.cell(r, 23).value for r in range(2, 5)] == [
+                "Верх: песчаник учебный.\nНиз: аргиллит учебный.",
+                "=1+1; Алевролит вымышленный.",
+                "Повтор физической записи. Все строки сохраняются.",
+            ]
+            assert all(
+                main.cell(r, c).value is None for r in range(2, 5) for c in (*range(13, 21),)
+            )
+            assert main["W3"].data_type == "s"
+            codes = [
+                book["Контроль"].cell(r, 1).value for r in range(1, book["Контроль"].max_row + 1)
+            ]
+            assert codes.count("NO_CORE_INTERVAL") == 2
+            assert {
+                "percent_mismatch",
+                "possible_duplicate_core",
+                "duplicate_core_number",
+                "summary_mismatch",
+            } <= set(codes)
+        else:
+            assert main["N3"].value == 101.75  # original overlap is not trimmed
+            assert main["N2"].fill.fgColor.rgb == "00FFF2CC"
+            assert main["N3"].fill.fgColor.rgb == "00FFF2CC"
+        for row in range(2, 5):
+            assert main.cell(row, 12).value == f'=IFERROR(K{row}/J{row},"")'
+            assert main.cell(row, 12).number_format == "0.00%"
+    finally:
+        book.close()
+
+
 def frozen_smoke(folder: Path) -> int:
     """Run real binary DOC + DOCX conversion; write a safe external status file."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -149,6 +212,36 @@ def frozen_smoke(folder: Path) -> int:
         for path in cli_output.glob("*.xlsx"):
             verify_output(path)
         assert len(list(cli_output.glob("*.xlsx"))) == 2
+        review_inputs = folder / "review-inputs"
+        review_inputs.mkdir()
+        create_core_docx(review_inputs / "Core.docx")
+        create_docx(review_inputs / "Overlap.docx")
+        overlap = Document(str(review_inputs / "Overlap.docx"))
+        for p in overlap.paragraphs:
+            if p.text.startswith("Слой 3"):
+                p.text = p.text.replace("102,00-103,00м", "101,75-103,00м", 1)
+        overlap.save(str(review_inputs / "Overlap.docx"))
+        review_results = convert_batch(review_inputs, template)
+        assert len(review_results) == 2 and all(
+            r.status == "review_required" for r in review_results
+        )
+        for result in review_results:
+            assert result.output is not None and result.output.parent.name == "review"
+            verify_review(result.output, core=result.source.stem == "Core")
+        assert (
+            cli_main(
+                [
+                    "--input-dir",
+                    str(review_inputs),
+                    "--template",
+                    str(template),
+                    "--output-dir",
+                    str(folder / "review-cli"),
+                    "--json",
+                ]
+            )
+            == 3
+        )
         report.write_text(
             json.dumps(
                 {
@@ -156,6 +249,10 @@ def frozen_smoke(folder: Path) -> int:
                     "version": __version__,
                     "documents": 2,
                     "layers_each": 3,
+                    "core_interval_records": 3,
+                    "review_documents": 2,
+                    "core_interval_gate": "PASS",
+                    "review_policy_gate": "PASS",
                     "backend": "ms-doc-piece-table+olefile",
                     "frozen": bool(getattr(sys, "frozen", False)),
                 }

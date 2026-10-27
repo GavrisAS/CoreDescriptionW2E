@@ -25,9 +25,18 @@ def main() -> int:
     args = parser.parse_args()
     parsed = parse_document(read_word(args.word))
     workbook = load_workbook(args.xlsx, data_only=False)
-    sheet = workbook.active
+    sheet = next(
+        (
+            s
+            for s in workbook.worksheets
+            if s.max_column == 23 and s.title not in {"Контроль", "Описание"}
+        ),
+        None,
+    )
     assert sheet is not None
     mapping = schema(sheet)
+    if parsed.mode == "CORE_INTERVAL":
+        return audit_core(parsed, workbook, sheet, mapping, args)
     descriptions = [sheet.cell(i + 2, mapping[22]).value for i in range(len(parsed.layers))]
     summary = {
         "runs": len(parsed.runs),
@@ -142,7 +151,7 @@ def main() -> int:
         checks["expected_structure"] = all(summary[key] == value for key, value in expected.items())
     workbook.close()
     summary["checks"] = checks
-    summary["status"] = "PASS" if all(checks.values()) and summary["errors"] == 0 else "FAIL"
+    summary["status"] = parsed.status if all(checks.values()) and parsed.exportable else "FAIL"
     report = args.xlsx.parent / "validation-summary.json"
     report.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(
@@ -156,7 +165,75 @@ def main() -> int:
             ensure_ascii=False,
         )
     )
-    return 0 if summary["status"] == "PASS" else 1
+    return 0 if summary["status"] in {"PASS", "REVIEW_REQUIRED"} else 1
+
+
+def audit_core(parsed, workbook, sheet, mapping, args) -> int:
+    checks = {
+        "rows": sheet.max_row == len(parsed.cores) + 1,
+        "columns": sheet.max_column == 23,
+        "control": "Контроль" in workbook.sheetnames,
+        "review_visible": workbook.active.title == "Контроль"
+        and "ТРЕБУЕТ ПРОВЕРКИ" in workbook["Контроль"]["A1"].value,
+        "no_invented_layers": all(
+            sheet.cell(row, mapping[k]).value is None
+            for row in range(2, sheet.max_row + 1)
+            for k in (12, 13, 14, 15, 16, 17, 18, 19)
+        ),
+        "w_complete": all(
+            sheet.cell(row, mapping[22]).value == core.full_text
+            for row, core in enumerate(parsed.cores, 2)
+        ),
+    }
+    if args.template:
+        template = load_workbook(args.template)
+        checks["header_preserved"] = [c.value for c in sheet[1]] == [
+            c.value for c in template.active[1]
+        ]
+        template.close()
+    if args.reference_docx:
+        reference = read_word(args.reference_docx)
+        checks["independent_text_match"] = re.sub(r"\s+", "", parsed.document.raw_text) == re.sub(
+            r"\s+", "", reference.raw_text
+        )
+    recovery_ok = True
+    depths_ok = True
+    for row, core in enumerate(parsed.cores, 2):
+        recovery_ok &= sheet.cell(row, mapping[9]).value == float(core.drilled)
+        recovery_ok &= sheet.cell(row, mapping[10]).value == float(core.recovered)
+        j, k = (get_column_letter(mapping[key]) for key in (9, 10))
+        recovery_ok &= sheet.cell(row, mapping[11]).value == f'=IFERROR({k}{row}/{j}{row},"")'
+        recovery_ok &= sheet.cell(row, mapping[11]).number_format == "0.00%"
+        depths_ok &= sheet.cell(row, mapping[7]).value == float(core.drilling.top)
+        depths_ok &= sheet.cell(row, mapping[8]).value == float(core.drilling.bottom)
+    checks["recovery_all_run_rows"] = recovery_ok
+    checks["depth_values"] = depths_ok
+    summary = {
+        "mode": parsed.mode,
+        "status": parsed.status if all(checks.values()) and parsed.exportable else "FAIL",
+        "core_records": len(parsed.cores),
+        "no_core": len(parsed.no_core),
+        "checks": checks,
+        "issues": dict(Counter(i.code for i in parsed.issues)),
+        "reconciliation": parsed.reconciliation,
+    }
+    if args.expected:
+        expected = json.loads(args.expected.read_text(encoding="utf-8"))
+        checks["expected_structure"] = all(summary.get(key) == val for key, val in expected.items())
+        if not all(checks.values()):
+            summary["status"] = "FAIL"
+    report = args.xlsx.parent / "validation-summary.json"
+    report.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )
+    workbook.close()
+    print(
+        json.dumps(
+            {k: summary[k] for k in ("mode", "status", "core_records", "no_core", "checks")},
+            ensure_ascii=False,
+        )
+    )
+    return 0 if summary["status"] == "REVIEW_REQUIRED" else 1
 
 
 if __name__ == "__main__":

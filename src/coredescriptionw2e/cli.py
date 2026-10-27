@@ -37,11 +37,19 @@ def main(argv: list[str] | None = None) -> int:
     else:
         for r in results:
             print(
-                f"{r.source.name}: {'ГОТОВО' if r.status == 'success' else 'ОШИБКА'}; предупреждений: {sum(i.severity == 'warning' for i in r.issues)}"
+                f"{r.source.name}: { {'success': 'PASS', 'review_required': 'ТРЕБУЕТ ПРОВЕРКИ', 'unsupported': 'НЕ ПОДДЕРЖИВАЕТСЯ', 'error': 'ОШИБКА'}[r.status] }; предупреждений: {sum(i.severity == 'warning' for i in r.issues)}"
             )
+            if r.output:
+                print(f"  Книга: {r.output}")
             for issue in r.issues:
                 print(f"  [{issue.code}] {issue.message}")
         print(
-            f"Готово: {sum(r.status == 'success' for r in results)}; ошибок файлов: {sum(r.status == 'error' for r in results)}."
+            f"PASS: {sum(r.status == 'success' for r in results)}; REVIEW_REQUIRED: {sum(r.status == 'review_required' for r in results)}; ошибок/unsupported: {sum(r.status in {'error', 'unsupported'} for r in results)}."
         )
-    return 1 if any(r.status == "error" for r in results) else 0
+    return (
+        1
+        if any(r.status in {"error", "unsupported"} for r in results)
+        else 3
+        if any(r.status == "review_required" for r in results)
+        else 0
+    )

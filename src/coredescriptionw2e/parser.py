@@ -117,31 +117,29 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
         )
 
 
-def parse_document(document: ImportedDocument) -> ParseResult:
-    result = ParseResult(document, DocumentMetadata(), [], list(document.issues))
+def parse_document(
+    document: ImportedDocument, *, percent_tolerance: Decimal = Decimal("0.5")
+) -> ParseResult:
+    from .domain import ConversionError
+
+    if percent_tolerance < 0 or not percent_tolerance.is_finite():
+        raise ConversionError("Некорректный порог сравнения процентов.", code="invalid_config")
+    result = ParseResult(
+        document, DocumentMetadata(), [], list(document.issues), percent_tolerance=percent_tolerance
+    )
     from .validation import validate
 
-    if any(CORE_HEADING.fullmatch(b.text) for b in document.blocks) and not any(
-        RUN.match(b.text) or LAYER.match(b.text) or INTERVAL_LAYER.match(b.text)
-        for b in document.blocks
-    ):
-        result.issues.append(
-            ParseIssue(
-                "unsupported_core_layout",
-                "Таблица «Керн N» без явных долблений и слоёв: соответствие номеров и глубин "
-                "слоям не определено; требуется проверенная копия с явной структурой.",
-                "error",
-                next(b.source for b in document.blocks if CORE_HEADING.fullmatch(b.text)),
-            )
-        )
-        result.issues.extend(validate(result))
-        return result
+    if any(CORE_HEADING.fullmatch(b.text) for b in document.blocks):
+        from .core_parser import parse_core_document
+
+        return parse_core_document(document, percent_tolerance=percent_tolerance)
     run: CoringRun | None = None
     layer: Layer | None = None
     stratum: str | None = None
     stratum_source: SourceRef | None = None
     stopped = False
     run_header: list[str] = []
+    header_blocks = []
 
     def finish_layer() -> None:
         nonlocal layer
@@ -158,34 +156,24 @@ def parse_document(document: ImportedDocument) -> ParseResult:
         run.gis = found[1] if len(found) > 1 else None
         if len(found) == 1 and re.search(r"по\s+бурению\s+и\s+каротажу", text, re.I):
             run.gis = found[0]
-        for attr, pattern in (
-            ("drilled", rf"\b(?:проходка|проход)\b\s*(?:{DASH}|:)?\s*({NUMBER})\s*м\b"),
-            ("recovered", rf"\bвынос(?:\s+керна)?\s*[-–—:]?\s*({NUMBER})\s*м\b"),
-        ):
-            values = {decimal(m[1]) for m in re.finditer(pattern, text, re.I)}
-            if attr == "recovered":
-                # A paired explicit metric, never a bare mention of core in prose.
-                paired = (
-                    rf"\b(?:проходка|проход)\b\s*(?:{DASH}|:)?\s*{NUMBER}\s*м\s*,\s*"
-                    rf"керна\s*(?:{DASH}|:)?\s*({NUMBER})\s*м\b"
-                )
-                values.update(decimal(m[1]) for m in re.finditer(paired, text, re.I))
-            if len(values) == 1:
-                setattr(run, attr, next(iter(values)))
-            elif len(values) > 1:
-                setattr(run, attr, None)
-                if not any(
-                    i.code == "run_metric_conflict" and i.source == run.source
-                    for i in result.issues
-                ):
-                    result.issues.append(
-                        ParseIssue(
-                            "run_metric_conflict",
-                            "В шапке долбления указаны противоречащие значения проходки или выноса.",
-                            "error",
-                            run.source,
-                        )
-                    )
+        from .metrics import computed, extract, recovery
+
+        run.metrics, metric_issues = extract(text, run.source)
+        for key in list(run.metrics):
+            for header_block in header_blocks:
+                individual, _ = extract(header_block.text, header_block.source)
+                if key in individual:
+                    run.metrics[key] = individual[key]
+                    break
+        result.issues.extend(i for i in metric_issues if i not in result.issues)
+        run.drilled = (
+            run.metrics["declared_drilled"].value if "declared_drilled" in run.metrics else None
+        )
+        run.recovered = recovery(run.metrics)
+        if metric_issues:
+            run.recovered = None
+        run.no_core = run.recovered == 0 and "boxed_core" in run.metrics and not run.layers
+        computed(run.metrics, run.drilled, run.recovered, run.source)
 
     for block in document.blocks:
         text = block.text
@@ -195,6 +183,7 @@ def parse_document(document: ImportedDocument) -> ParseResult:
             run = CoringRun(int(m[1]), block.source)
             result.runs.append(run)
             run_header = [text[m.end() :]]
+            header_blocks = [block]
             stopped = False
             # An explicit stratigraphic heading persists across coring runs,
             # until the next heading; no assignment by numerical overlap.
@@ -237,10 +226,21 @@ def parse_document(document: ImportedDocument) -> ParseResult:
                 (block.source, "summary" if SUMMARY.match(text) else "signature")
             )
         elif layer is not None and not stopped:
+            if layer.source.cell_role == "LAST" and block.source.cell_role == "OTHER":
+                result.classified.append((block.source, "auxiliary"))
+                result.issues.append(
+                    ParseIssue(
+                        "ancillary_table_content",
+                        "Содержимое соседней служебной колонки сохранено в импорте и исключено из W.",
+                        source=block.source,
+                    )
+                )
+                continue
             layer.body_blocks.append(block)
             result.classified.append((block.source, "body"))
         elif run is not None and not stopped and not run.layers:
             run_header.append(text)
+            header_blocks.append(block)
             result.classified.append((block.source, "run"))
         else:
             result.classified.append((block.source, "header" if run is None else "summary"))
@@ -263,5 +263,9 @@ def parse_document(document: ImportedDocument) -> ParseResult:
                     result.metadata.sources["field_name"] = block.source
     finish_layer()
     run_fields()
+    from .metrics import layered_totals
+
+    result.totals, total_issues = layered_totals(document)
+    result.issues.extend(total_issues)
     result.issues.extend(validate(result))
     return result

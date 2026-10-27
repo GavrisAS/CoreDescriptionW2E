@@ -45,3 +45,12 @@ Thumbs.db
 .env*
 *.pem
 *.key
+
+# Per-run private audits, regardless of the chosen output root
+/acceptance-*/
+/investigation/
+/review/
+validation-summary.json
+*.validation.json
+compatibility-audit*.json
+conversion-status*.json

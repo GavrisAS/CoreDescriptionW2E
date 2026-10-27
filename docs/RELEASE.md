@@ -32,7 +32,7 @@ Office/LibreOffice и внешних декодеров.
 
 Build выполняет quality checks, PyInstaller onedir/windowed, аудит Qt DLL,
 лицензий и точных sources. Из **этого ZIP** выполняются GUI, CLI help/version и
-реальные synthetic DOC+DOCX → XLSX с проверкой формул, W и оформления. Чистый
+synthetic DOC+DOCX → XLSX и CORE_INTERVAL/REVIEW_REQUIRED с проверкой формул, W и оформления. Чистый
 каталог с пробелами/кириллицей находится вне checkout, PATH — только системный,
 timeout каждого EXE 90 секунд. Внешний manifest содержит версию, source commit,
 ZIP/EXE SHA-256, frozen receipt. В ZIP есть внутренний manifest с версией/source.
@@ -85,3 +85,10 @@ Office пользователю устанавливать не нужно. Фо
 Никаких повторных uploads/замены файлов/retag. Это восстановление незавершённой
 публикации, а не re-run сборки. Draft читается API по ID из списка Releases:
 endpoint `/releases/tags/...` до публикации возвращает 404.
+
+
+Новый frozen receipt содержит `core_interval_gate=PASS`, `review_policy_gate=PASS`,
+`core_interval_records=3`, `review_documents=2` наряду с прежними baseline gates.
+`verify_bundle` проверяет их до публикации. CORE_INTERVAL — перенос целой исходной
+записи; неизвестные глубины геологических слоёв не заявляются. Release Notes
+явно сохраняют REVIEW_REQUIRED и PENDING приёмку, независимо от успешной сборки.
