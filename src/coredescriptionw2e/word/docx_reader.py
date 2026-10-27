@@ -26,7 +26,8 @@ def read_docx(path: Path) -> ImportedDocument:
         body = document.element.body
         if body.xpath(".//w:txbxContent | .//w:altChunk | .//w:del | .//w:ins"):
             raise ConversionError(
-                "DOCX: рамки, внешние блоки или исправления требуют ручной проверки."
+                "DOCX: рамки, внешние блоки или исправления требуют ручной проверки.",
+                code="unsupported_docx_content",
             )
         entries: list[tuple[str, str]] = []
         for element in body.iter(qn("w:p")):
@@ -48,4 +49,6 @@ def read_docx(path: Path) -> ImportedDocument:
             entries.extend((f"{position}/line:{i}", line) for i, line in enumerate(raw.split("\n")))
         return make_document(path, entries, "\n".join(value for _, value in entries))
     except (zipfile.BadZipFile, KeyError, ValueError, etree.XMLSyntaxError) as exc:
-        raise ConversionError("DOCX: повреждённый или неподдерживаемый документ.") from exc
+        raise ConversionError(
+            "DOCX: повреждённый или неподдерживаемый документ.", code="invalid_docx"
+        ) from exc

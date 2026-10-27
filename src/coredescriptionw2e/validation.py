@@ -33,6 +33,13 @@ def validate(result: ParseResult) -> list[ParseIssue]:
     seen_runs: set[int] = set()
     previous_run: DepthInterval | None = None
     for run in result.runs:
+        if not run.layers:
+            issue(
+                "empty_run",
+                "В долблении не найдены слои; неполная книга не создаётся.",
+                run.source,
+                True,
+            )
         if run.number in seen_runs:
             issue("duplicate_run", "Повторяется номер долбления.", run.source, True)
         seen_runs.add(run.number)

@@ -94,7 +94,7 @@ def convert_batch(
             issues.extend(write_excel(parsed, template, path, output, overwrite=overwrite))
             result = ConversionResult(path, output, "success", issues, parsed)
         except ConversionError as exc:
-            issues.append(ParseIssue("conversion_failed", str(exc), "error"))
+            issues.append(ParseIssue(exc.code, str(exc), "error"))
             result = ConversionResult(path, None, "error", issues, parsed)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             # Never include exception text: libraries may quote private source text/paths.

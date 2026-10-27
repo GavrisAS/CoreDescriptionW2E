@@ -113,3 +113,7 @@ class ConversionResult:
 
 class ConversionError(Exception):
     """Expected failure with a safe, path-free diagnostic."""
+
+    def __init__(self, message: str, *, code: str = "conversion_failed") -> None:
+        super().__init__(message)
+        self.code = code

@@ -50,6 +50,22 @@ def test_docx_rejects_dtd(sample):
         read_word(word)
 
 
+@pytest.mark.parametrize("tag", ["txbxContent", "altChunk", "ins", "del"])
+def test_docx_unsafe_contents_remain_blocked(sample, tag):
+    _, word, _ = sample
+    with zipfile.ZipFile(word) as archive:
+        parts = {i.filename: archive.read(i) for i in archive.infolist()}
+    parts["word/document.xml"] = parts["word/document.xml"].replace(
+        b"<w:body>", f"<w:body><w:{tag}/>".encode()
+    )
+    with zipfile.ZipFile(word, "w") as archive:
+        for name, value in parts.items():
+            archive.writestr(name, value)
+    with pytest.raises(ConversionError) as exc:
+        read_word(word)
+    assert exc.value.code == "unsupported_docx_content"
+
+
 def fib_and_piece(text: str, compressed: bool = False) -> tuple[bytes, bytes]:
     word = bytearray(2048)
     struct.pack_into("<HH", word, 0, 0xA5EC, 0xC1)

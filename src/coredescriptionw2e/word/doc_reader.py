@@ -45,7 +45,10 @@ def extract_main_story(word: bytes, table: bytes) -> str:
     if main_length > MAX_TEXT_CHARS:
         raise ConversionError("DOC: превышен лимит основного текста.")
     if _u32(word, pos + 9 * 4):
-        raise ConversionError("DOC: текстовые рамки требуют ручной проверки; импорт остановлен.")
+        raise ConversionError(
+            "DOC: текстовые рамки требуют ручной проверки; импорт остановлен.",
+            code="unsupported_doc_textbox",
+        )
     cb_mac = _u32(word, pos)
     if cb_mac > len(word):
         raise ConversionError("DOC: повреждён размер WordDocument.")

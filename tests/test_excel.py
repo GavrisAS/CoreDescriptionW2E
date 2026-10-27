@@ -23,6 +23,17 @@ def test_excel_end_to_end_and_template_unchanged(sample):
     assert not list(output.parent.glob(".core-w2e-*"))
 
 
+def test_binary_doc_end_to_end_and_sources_unchanged(sample):
+    folder, _, template = sample
+    word = Path("tests/fixtures/synthetic.doc")
+    source_before, template_before = word.read_bytes(), template.read_bytes()
+    output = folder / "binary.xlsx"
+    parsed = parse_document(read_word(word))
+    write_excel(parsed, template, word, output)
+    verify_output(output)
+    assert word.read_bytes() == source_before and template.read_bytes() == template_before
+
+
 @pytest.mark.parametrize(
     "value", ['=HYPERLINK("https://example.invalid")', "+cmd", "-1+2", "@SUM(A1)"]
 )

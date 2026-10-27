@@ -148,13 +148,15 @@ def write_excel(
         sheet.conditional_formatting._cf_rules.clear()
         row = 2
         for run in parsed.runs:
-            for index, layer in enumerate(run.layers):
+            for layer in run.layers:
                 for column, style in styles.items():
                     sheet.cell(row, column)._style = copy(style)
                 values: dict[int, str | int | float | None] = {
                     0: parsed.metadata.field_name,
                     3: parsed.metadata.well,
                     6: os.path.relpath(source.resolve(), output.parent.resolve()),
+                    9: float(run.drilled) if run.drilled is not None else None,
+                    10: float(run.recovered) if run.recovered is not None else None,
                     18: layer.stratum,
                     19: layer.number,
                     20: layer.lithology,
@@ -165,9 +167,6 @@ def write_excel(
                     if interval:
                         values[key] = float(interval.top)
                         values[key + 1] = float(interval.bottom)
-                if index == 0:
-                    values[9] = float(run.drilled) if run.drilled is not None else None
-                    values[10] = float(run.recovered) if run.recovered is not None else None
                 for key, value in values.items():
                     cell = sheet.cell(row, mapping[key])
                     if isinstance(value, str):
@@ -178,7 +177,7 @@ def write_excel(
                 def address(key: int, row: int = row) -> str:
                     return f"{get_column_letter(mapping[key])}{row}"
 
-                if index == 0 and run.drilled is not None and run.recovered is not None:
+                if run.drilled is not None and run.recovered is not None:
                     sheet.cell(row, mapping[11], f'=IFERROR({address(10)}/{address(9)},"")')
                 if layer.drilling is not None:
                     sheet.cell(row, mapping[12], f"={address(14)}-{address(13)}")

@@ -19,6 +19,15 @@ DASH = r"[-–—−‑]"
 INTERVAL = re.compile(rf"(?<![\d.,])({NUMBER})\s*{DASH}\s*({NUMBER})\s*м?", re.I)
 RUN = re.compile(r"^Долбление\s*№?\s*(\d+)\b", re.I)
 LAYER = re.compile(r"^Слой\s*№?\s*(\d+)\b[.:]?", re.I)
+# Only the complete, numbered two-range heading is an equivalent layer boundary.
+# A range mentioned in prose, or an unnumbered interval, remains ordinary text.
+INTERVAL_LAYER = re.compile(
+    rf"^Интервал\s*№?\s*(\d+)\.\s*"
+    rf"(?={NUMBER}\s*{DASH}\s*{NUMBER}\s*м\s*"
+    rf"\(\s*{NUMBER}\s*{DASH}\s*{NUMBER}\s*м\s*\)\s*$)",
+    re.I,
+)
+CORE_HEADING = re.compile(r"^Керн\s*(?:№\s*)?\d+\s*$", re.I)
 STRATUM = re.compile(r"^(?:Пласт\s+\S+|Доюрский\s+комплекс)\b", re.I)
 SUMMARY = re.compile(r"^Всего\b", re.I)
 SIGNATURE = re.compile(
@@ -110,6 +119,23 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
 
 def parse_document(document: ImportedDocument) -> ParseResult:
     result = ParseResult(document, DocumentMetadata(), [], list(document.issues))
+    from .validation import validate
+
+    if any(CORE_HEADING.fullmatch(b.text) for b in document.blocks) and not any(
+        RUN.match(b.text) or LAYER.match(b.text) or INTERVAL_LAYER.match(b.text)
+        for b in document.blocks
+    ):
+        result.issues.append(
+            ParseIssue(
+                "unsupported_core_layout",
+                "Таблица «Керн N» без явных долблений и слоёв: соответствие номеров и глубин "
+                "слоям не определено; требуется проверенная копия с явной структурой.",
+                "error",
+                next(b.source for b in document.blocks if CORE_HEADING.fullmatch(b.text)),
+            )
+        )
+        result.issues.extend(validate(result))
+        return result
     run: CoringRun | None = None
     layer: Layer | None = None
     stratum: str | None = None
@@ -136,9 +162,30 @@ def parse_document(document: ImportedDocument) -> ParseResult:
             ("drilled", rf"\b(?:проходка|проход)\b\s*(?:{DASH}|:)?\s*({NUMBER})\s*м\b"),
             ("recovered", rf"\bвынос(?:\s+керна)?\s*[-–—:]?\s*({NUMBER})\s*м\b"),
         ):
-            m = re.search(pattern, text, re.I)
-            if m:
-                setattr(run, attr, decimal(m[1]))
+            values = {decimal(m[1]) for m in re.finditer(pattern, text, re.I)}
+            if attr == "recovered":
+                # A paired explicit metric, never a bare mention of core in prose.
+                paired = (
+                    rf"\b(?:проходка|проход)\b\s*(?:{DASH}|:)?\s*{NUMBER}\s*м\s*,\s*"
+                    rf"керна\s*(?:{DASH}|:)?\s*({NUMBER})\s*м\b"
+                )
+                values.update(decimal(m[1]) for m in re.finditer(paired, text, re.I))
+            if len(values) == 1:
+                setattr(run, attr, next(iter(values)))
+            elif len(values) > 1:
+                setattr(run, attr, None)
+                if not any(
+                    i.code == "run_metric_conflict" and i.source == run.source
+                    for i in result.issues
+                ):
+                    result.issues.append(
+                        ParseIssue(
+                            "run_metric_conflict",
+                            "В шапке долбления указаны противоречащие значения проходки или выноса.",
+                            "error",
+                            run.source,
+                        )
+                    )
 
     for block in document.blocks:
         text = block.text
@@ -152,7 +199,7 @@ def parse_document(document: ImportedDocument) -> ParseResult:
             # An explicit stratigraphic heading persists across coring runs,
             # until the next heading; no assignment by numerical overlap.
             result.classified.append((block.source, "run"))
-        elif m := LAYER.match(text):
+        elif m := LAYER.match(text) or INTERVAL_LAYER.match(text):
             finish_layer()
             run_fields()
             result.classified.append((block.source, "layer"))
@@ -216,7 +263,5 @@ def parse_document(document: ImportedDocument) -> ParseResult:
                     result.metadata.sources["field_name"] = block.source
     finish_layer()
     run_fields()
-    from .validation import validate
-
     result.issues.extend(validate(result))
     return result

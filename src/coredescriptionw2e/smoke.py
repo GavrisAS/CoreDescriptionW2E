@@ -77,9 +77,13 @@ def verify_output(path: Path) -> None:
         assert [sheet.cell(r, 20).value for r in range(2, 5)] == [1, 3, 1]
         assert sheet["N2"].value == 100 and sheet["P2"].value == 100.5
         assert sheet["N4"].value == 103 and sheet["P4"].value == 103.25
-        assert sheet["L2"].value == '=IFERROR(K2/J2,"")'
-        assert sheet["L3"].value is None
-        assert sheet["L4"].value == '=IFERROR(K4/J4,"")'
+        for row, (drilled, recovered) in enumerate(((3, 3), (3, 3), (2, 2)), 2):
+            assert sheet.cell(row, 10).value == drilled
+            assert sheet.cell(row, 11).value == recovered
+            assert sheet.cell(row, 12).value == f'=IFERROR(K{row}/J{row},"")'
+            assert sheet.cell(row, 12).data_type == "f"
+            assert sheet.cell(row, 12).number_format == "0.00%"
+        assert not sheet.merged_cells.ranges
         assert sheet["M2"].value == "=O2-N2" and sheet["M4"].value == "=O4-N4"
         assert sheet["W3"].data_type == "s" and str(sheet["W3"].value).startswith("=1+1")
         for row in range(2, 5):
@@ -87,6 +91,13 @@ def verify_output(path: Path) -> None:
             assert "от верха." in text and "Всего" not in text and "Геолог" not in text
         assert "0,19–0,23м" in str(sheet["W2"].value)
         assert "Запах\nнефти отсутствует" in str(sheet["W2"].value)
+        assert [sheet.cell(row, 23).value for row in range(2, 5)] == [
+            "\n".join(SYNTHETIC[7:9]),
+            SYNTHETIC[10],
+            SYNTHETIC[19],
+        ]
+        assert workbook.calculation is not None
+        assert workbook.calculation.fullCalcOnLoad and workbook.calculation.forceFullCalc
         assert sheet["A1"].font.bold and sheet.column_dimensions["A"].width == 21
         assert sheet["A2"].fill.fgColor.rgb == "00DDEEFF"
         assert sheet["N2"].data_type == "n" and sheet["N2"].number_format == "0.00"

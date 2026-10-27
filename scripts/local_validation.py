@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 from coredescriptionw2e.excel.writer import schema
 from coredescriptionw2e.parser import parse_document
@@ -103,16 +104,19 @@ def main() -> int:
             j = sheet.cell(row, mapping[9]).value
             k = sheet.cell(row, mapping[10]).value
             percentage = sheet.cell(row, mapping[11]).value
-            if offset:
-                recovery_ok &= j is None and k is None and percentage is None
+            recovery_ok &= j == (float(run.drilled) if run.drilled is not None else None)
+            recovery_ok &= k == (float(run.recovered) if run.recovered is not None else None)
+            cell = sheet.cell(row, mapping[11])
+            if run.drilled is not None and run.recovered is not None:
+                drilled_col = get_column_letter(mapping[9])
+                recovered_col = get_column_letter(mapping[10])
+                recovery_ok &= percentage == f'=IFERROR({recovered_col}{row}/{drilled_col}{row},"")'
+                recovery_ok &= cell.data_type == "f"
             else:
-                recovery_ok &= j == (float(run.drilled) if run.drilled is not None else None)
-                recovery_ok &= k == (float(run.recovered) if run.recovered is not None else None)
-                recovery_ok &= (percentage is not None) == (
-                    run.drilled is not None and run.recovered is not None
-                )
+                recovery_ok &= percentage is None
+            recovery_ok &= cell.number_format == "0.00%"
         first_row += len(run.layers)
-    checks["recovery_first_rows_only"] = recovery_ok
+    checks["recovery_all_run_rows"] = recovery_ok
     if args.template:
         template = load_workbook(args.template)
         original_sheet = template.active

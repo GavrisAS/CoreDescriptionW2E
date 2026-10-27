@@ -147,3 +147,90 @@ def test_layer_progress_cannot_fill_run_field():
     result = parse_lines(lines)
     assert result.runs[0].drilled is None
     assert "Проход 19м." in result.layers[0].full_text
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Интервал 0,10-0,20м внутри описания.",
+        "Интервал 2. Пояснение без абсолютных глубин.",
+        "Интервал 2. 101-102м (101-102м) внутри описания.",
+        "На интервале 101-102м (101-102м) текст продолжается.",
+    ],
+)
+def test_interval_prose_is_not_a_layer(line):
+    result = parse_lines(
+        [
+            "Долбление 1",
+            "Инт:100-103м по бурению и каротажу",
+            "Слой 1. 100-103м (100-103м)",
+            "3м – Песчаник.",
+            line,
+        ]
+    )
+    assert len(result.layers) == 1 and line in result.layers[0].full_text
+
+
+def test_numbered_interval_keeps_overlap_critical():
+    result = parse_lines(
+        [
+            "Долбление 1",
+            "Инт:100-103м по бурению и каротажу",
+            "Интервал 1. 100-102м (100-102м)",
+            "2м – Песчаник.",
+            "Интервал 2. 101-103м (102-104м)",
+            "2м – Алевролит.",
+        ]
+    )
+    assert result.has_errors
+    assert "layer_overlap" in {i.code for i in result.issues}
+    assert [layer.number for layer in result.layers] == [1, 2]
+
+
+def test_numbered_interval_resumes_after_intermediate_summary():
+    result = parse_lines(
+        [
+            "Долбление 1",
+            "Инт:100-103м по бурению и каротажу",
+            "Слой 1. 100-102м (100-102м)",
+            "2м – Песчаник.",
+            "Всего по пласту",
+            "Пласт Учебный",
+            "Интервал 2. 102-103м (102-103м)",
+            "1м – Алевролит.",
+        ]
+    )
+    assert not result.has_errors and [layer.number for layer in result.layers] == [1, 2]
+    assert [layer.full_text for layer in result.layers] == ["2м – Песчаник.", "1м – Алевролит."]
+
+
+@pytest.mark.parametrize("metric", ["керна 2м", "Проходка 4м. керна 2м", "непроходка 4м, керна 2м"])
+def test_bare_core_length_does_not_supply_recovery(metric):
+    lines = list(SYNTHETIC)
+    lines[4] = metric
+    assert parse_lines(lines).runs[0].recovered is None
+
+
+def test_paired_metric_in_body_does_not_supply_run_metadata():
+    lines = list(SYNTHETIC)
+    lines[4] = "Показатели не указаны"
+    lines[8] += " Проходка 4м, керна 2м."
+    result = parse_lines(lines)
+    assert result.runs[0].drilled is None and result.runs[0].recovered is None
+    assert "Проходка 4м, керна 2м." in result.layers[0].full_text
+
+
+@pytest.mark.parametrize(
+    "metric",
+    ["Проходка 4м, проходка 5м", "Проходка 4м, керна 2м, вынос керна 3м"],
+)
+def test_conflicting_run_metrics_are_not_silently_selected(metric):
+    lines = list(SYNTHETIC)
+    lines[4] = metric
+    result = parse_lines(lines)
+    assert result.has_errors and "run_metric_conflict" in {i.code for i in result.issues}
+
+
+def test_empty_run_is_critical_even_if_other_run_has_layers():
+    result = parse_lines([*SYNTHETIC, "Долбление 3", "Инт:105-106м по бурению и каротажу"])
+    assert result.has_errors and "empty_run" in {i.code for i in result.issues}
