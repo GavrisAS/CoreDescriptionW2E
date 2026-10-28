@@ -3,7 +3,7 @@
 import re
 
 from .domain import CoreInterval, CorePart, ParseIssue, ParseResult, SuppressedDuplicate
-from .semantics import ROCKS, hydrocarbons, lithology
+from .semantics import ROCKS, ambiguous_hydrocarbons, hydrocarbons, lithology
 
 POSITION = re.compile(r"^(?:Верх|Низ)\s*:\s*\S", re.I)
 POWER = re.compile(r"^\d+(?:[.,]\d+)?\s*м\s*[-–—:]\s*(.+)", re.I)
@@ -83,6 +83,14 @@ def prepare_cores(result: ParseResult) -> None:
     for core in result.cores:
         core.parts, ambiguous = split_core(core)
         for part in core.parts:
+            if ambiguous_hydrocarbons(part.full_text):
+                result.issues.append(
+                    ParseIssue(
+                        "ambiguous_hydrocarbons",
+                        "Неоднозначный УВ-признак: исходное выражение сохранено в W, V по этому фрагменту пустая.",
+                        source=part.source,
+                    )
+                )
             if part.lithology is None:
                 result.issues.append(
                     ParseIssue(

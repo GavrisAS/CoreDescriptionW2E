@@ -70,7 +70,7 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
         issues.append(
             ParseIssue("missing_thickness", "Начальная мощность не найдена.", source=layer.source)
         )
-    from .semantics import hydrocarbons, lithology
+    from .semantics import ambiguous_hydrocarbons, hydrocarbons, lithology
 
     layer.lithology = lithology(text)
     if layer.lithology is None:
@@ -82,6 +82,14 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
             )
         )
     layer.hydrocarbons = hydrocarbons(layer.full_text)
+    if ambiguous_hydrocarbons(layer.full_text):
+        issues.append(
+            ParseIssue(
+                "ambiguous_hydrocarbons",
+                "Неоднозначное упоминание нефти/углеводородов не подтверждает положительный признак; V по этому фрагменту не заполнена.",
+                source=layer.source,
+            )
+        )
     if not re.search(r"от\s+верха\s*\.?$", text, re.I):
         issues.append(
             ParseIssue(

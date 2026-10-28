@@ -27,7 +27,7 @@ PREFIX = re.compile(
 )
 OIL = re.compile(r"\b(?:нефт\w*|углеводород\w*)\b", re.I)
 NEGATIVE = re.compile(
-    r"\b(?:нет|отсутств\w*|без|не)\b",
+    r"\b(?:нет|отсутств\w*|без|не|ненефтенасыщ\w*|ненасыщ\w*)\b",
     re.I,
 )
 EVIDENCE = re.compile(
@@ -35,6 +35,11 @@ EVIDENCE = re.compile(
     r"нефтенасыщ\w*|насыщ\w*\s+(?:нефтью|углеводород\w*)|"
     r"(?:признак\w*|проявлен\w*)\s+углеводород\w*",
     re.I,
+)
+
+
+UNCERTAIN = re.compile(
+    r"\b(?:возмож\w*|предполож\w*|сомнитель\w*|вероятн\w*|неподтвержд\w*|неяс\w*)\b", re.I
 )
 
 
@@ -59,7 +64,20 @@ def hydrocarbons(text: str) -> str | None:
     clauses = re.split(r"(?<=[.!?;])\s+", text)
     return (
         " ".join(
-            clause for clause in clauses if EVIDENCE.search(clause) and not NEGATIVE.search(clause)
+            clause
+            for clause in clauses
+            if EVIDENCE.search(clause)
+            and not NEGATIVE.search(clause)
+            and not UNCERTAIN.search(clause)
         )
         or None
+    )
+
+
+def ambiguous_hydrocarbons(text: str) -> bool:
+    return any(
+        OIL.search(clause)
+        and not NEGATIVE.search(clause)
+        and (UNCERTAIN.search(clause) or not EVIDENCE.search(clause))
+        for clause in re.split(r"(?<=[.!?;])\s+", text)
     )

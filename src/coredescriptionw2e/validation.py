@@ -32,6 +32,7 @@ REVIEW_CODES = frozenset(
         "core_drilled_mismatch",
         "split_ambiguous",
         "stratum_ambiguous",
+        "ambiguous_hydrocarbons",
         "suppressed_duplicate",
         "recovery_exceeds_drilled",
         "summary_scope_incomplete",

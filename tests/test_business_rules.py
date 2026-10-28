@@ -113,6 +113,10 @@ def test_lithology_conservative_combination(text, expected):
         ("Нефти нет.", False),
         ("Без запаха нефти.", False),
         ("Не нефтенасыщенный.", False),
+        ("Ненефтенасыщенный песчаник.", False),
+        ("Ненасыщенный нефтью.", False),
+        ("Возможен запах нефти.", False),
+        ("Нефтенасыщенность сомнительна.", False),
         ("УРД, буроватый оттенок, углистый, сульфиды.", False),
         ("Нефть упоминается в справочнике.", False),
     ],
@@ -378,3 +382,16 @@ def test_no_core_evidence_cannot_hide_geological_text(sample):
     result = convert_batch(folder, template)[0]
     assert result.output is None and result.status == "unsupported"
     assert "ambiguous_boundaries" in {i.code for i in result.issues}
+
+
+def test_uncertain_uv_reaches_review_and_empty_v(sample):
+    folder, word, template = sample
+    core_rows(word, ["Песчаник. Нефтенасыщенность сомнительна."])
+    result = convert_batch(folder, template)[0]
+    assert result.output is not None
+    assert "ambiguous_hydrocarbons" in {i.code for i in result.issues}
+    book = load_workbook(result.output)
+    assert book["Лист1"]["V2"].value is None
+    assert "сомнительна" in book["Лист1"]["W2"].value
+    assert any(row[11].value == "ambiguous_hydrocarbons" for row in book["Контроль"])
+    book.close()
