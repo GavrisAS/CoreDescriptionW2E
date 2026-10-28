@@ -57,3 +57,19 @@ def test_existing_case_variant_is_not_overwritten(sample):
     existing.write_bytes(b"existing")
     assert convert_batch(folder, template, overwrite=True)[0].status == "error"
     assert existing.read_bytes() == b"existing"
+
+
+def test_batch_report_write_failure_keeps_all_file_outcomes(sample, monkeypatch):
+    from coredescriptionw2e import service
+
+    folder, word, template = sample
+    shutil.copyfile(word, folder / "another.docx")
+
+    def failed_report(*args):
+        raise OSError("invented inaccessible audit target")
+
+    monkeypatch.setattr(service, "_write_batch_report", failed_report)
+    results = convert_batch(folder, template)
+    assert len(results) == 2 and all(r.status == "error" and r.output for r in results)
+    assert all("batch_report_failed" in {i.code for i in r.issues} for r in results)
+    assert service.batch_summary(results)["error"] == 2

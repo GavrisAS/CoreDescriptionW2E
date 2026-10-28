@@ -36,6 +36,7 @@ class Worker(QThread):
     progress = Signal(int, int, str)
     completed = Signal(int, int, int, int, str)
     file_result = Signal(object)
+    batch_results = Signal(object)
     counters = Signal(object)
 
     def __init__(self, folder: Path, template: Path, parent: QWidget) -> None:
@@ -57,6 +58,7 @@ class Worker(QThread):
     def run(self) -> None:
         try:
             results = convert_batch(self.folder, self.template, progress=self.update)
+            self.batch_results.emit(results)
             self.counters.emit(batch_summary(results))
             success = sum(r.status == "success" for r in results)
             warnings = sum(i.severity == "warning" for r in results for i in r.issues)
@@ -140,10 +142,17 @@ class Window(QWidget):
         self.worker = Worker(Path(self.folder.text()), Path(self.template.text()), self)
         self.worker.progress.connect(self.update_progress)
         self.worker.file_result.connect(self.add_result)
+        self.worker.batch_results.connect(self.replace_results)
         self.worker.counters.connect(self.show_counters)
         self.worker.completed.connect(self.complete)
         self.worker.finished.connect(self.release_worker)
         self.worker.start()
+
+    @Slot(object)
+    def replace_results(self, results: list[ConversionResult]) -> None:
+        self.results.setRowCount(0)
+        for result in results:
+            self.add_result(result)
 
     @Slot(object)
     def add_result(self, result: ConversionResult) -> None:

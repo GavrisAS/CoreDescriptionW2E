@@ -180,6 +180,25 @@ def convert_batch(
         results.append(result)
         if progress:
             progress(count, len(census), result)
+    try:
+        _write_batch_report(results, census, output_dir)
+    except OSError:
+        # Never discard per-file outcomes when the final audit cannot be saved.
+        for result in results:
+            result.issues.append(
+                ParseIssue(
+                    "batch_report_failed",
+                    "Не удалось сохранить приватный отчёт пакета; исходы файлов сохранены в CLI/GUI, повторите в доступный каталог.",
+                    "error",
+                )
+            )
+            if result.status in {"success", "review_required"}:
+                result.status = "error"
+
+    return results
+
+
+def _write_batch_report(results, census, output_dir) -> None:
     # A new exclusive report for each run. Private: filenames/paths stay local.
     output_dir.mkdir(parents=True, exist_ok=True)
     report = output_dir / (
@@ -201,7 +220,6 @@ def convert_batch(
             indent=2,
             default=str,
         )
-    return results
 
 
 def batch_summary(results: list[ConversionResult]) -> dict[str, int]:

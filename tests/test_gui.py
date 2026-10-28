@@ -90,6 +90,7 @@ worker = Worker(folder, template, window)
 rows, counters = [], []
 worker.file_result.connect(rows.append)
 worker.file_result.connect(window.add_result)
+worker.batch_results.connect(window.replace_results)
 worker.counters.connect(counters.append)
 worker.counters.connect(window.show_counters)
 worker.completed.connect(window.complete)
