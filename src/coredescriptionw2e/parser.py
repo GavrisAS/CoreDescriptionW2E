@@ -130,7 +130,7 @@ def parse_document(
             _finish(layer, result.issues)
         layer = None
 
-    def run_fields() -> None:
+    def run_fields(*, final: bool = False) -> None:
         if run is None:
             return
         text = " ".join(run_header)
@@ -160,7 +160,9 @@ def parse_document(
         no_recovery = bool(re.search(r"керн\s+не\s+поднят", text, re.I))
         run.no_core = not run.layers and (run.recovered == 0 or zero_boxed or no_recovery)
         if run.no_core:
-            if run.recovered not in (None, 0):
+            if run.recovered in (None, 0):
+                run.recovered = Decimal(0)
+            elif final:
                 result.issues.append(
                     ParseIssue(
                         "zero_recovery_conflict",
@@ -169,15 +171,13 @@ def parse_document(
                         run.source,
                     )
                 )
-            else:
-                run.recovered = Decimal(0)
         computed(run.metrics, run.drilled, run.recovered, run.source)
 
     for block in document.blocks:
         text = block.text
         if m := RUN.match(text):
             finish_layer()
-            run_fields()
+            run_fields(final=True)
             run = CoringRun(int(m[1]), block.source)
             result.runs.append(run)
             run_header = [text[m.end() :]]
@@ -276,7 +276,7 @@ def parse_document(
                     result.metadata.field_name = field[1]
                     result.metadata.sources["field_name"] = block.source
     finish_layer()
-    run_fields()
+    run_fields(final=True)
     from .metrics import layered_totals
 
     result.totals, total_issues = layered_totals(document)

@@ -395,3 +395,17 @@ def test_uncertain_uv_reaches_review_and_empty_v(sample):
     assert "сомнительна" in book["Лист1"]["W2"].value
     assert any(row[11].value == "ambiguous_hydrocarbons" for row in book["Контроль"])
     book.close()
+
+
+def test_zero_boxed_is_not_zero_recovery_when_geological_layers_exist(sample):
+    folder, word, template = sample
+    doc = Document(word)
+    for paragraph in doc.paragraphs:
+        if paragraph.text.startswith("проходка"):
+            paragraph.text = paragraph.text.replace("вынос керна", "керна") + ", в коробках 0"
+    doc.save(word)
+    result = convert_batch(folder, template)[0]
+    assert result.status == "success" and result.parsed is not None and result.output is not None
+    assert result.parsed.runs[0].recovered == 3 and not result.parsed.runs[0].no_core
+    assert result.parsed.runs[1].recovered == 2 and not result.parsed.runs[1].no_core
+    assert "zero_recovery_conflict" not in {i.code for i in result.issues}
