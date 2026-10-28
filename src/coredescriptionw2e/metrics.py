@@ -5,8 +5,8 @@ from decimal import Decimal
 
 from .domain import ImportedDocument, Metric, ParseIssue, SourceRef
 
-NUMBER = r"\d+(?:[.,]\s*\d+)?"
-SEP = r"\s*[-–—−‑:=]?\s*"
+NUMBER = r"[−-]?\d+(?:[.,]\s*\d+)?"
+SEP = r"\s*(?:[-−](?=\s)|[–—‑:=])?\s*"
 PATTERNS = {
     "declared_drilled": rf"\b(?:проходка|проход)\b{SEP}({NUMBER})\s*м\b",
     "boxed_core": rf"\bв\s+коробках{SEP}({NUMBER})\s*м?\b",
@@ -17,7 +17,7 @@ PATTERNS = {
 
 
 def value(text: str) -> Decimal:
-    return Decimal(re.sub(r"\s", "", text).replace(",", "."))
+    return Decimal(re.sub(r"\s", "", text).replace(",", ".").replace("−", "-"))
 
 
 def extract(text: str, source: SourceRef) -> tuple[dict[str, Metric], list[ParseIssue]]:
@@ -42,10 +42,9 @@ def extract(text: str, source: SourceRef) -> tuple[dict[str, Metric], list[Parse
                 confidence="PAIRED" if variant == "declared_core" else "EXPLICIT",
             )
     # Explicit boxing is a separate observation, not a conflict with declared core.
-    # Without boxing, competing explicit/paired recovery must agree.
+    # Competing explicit/paired recovery must agree even when boxing is present.
     if (
-        "boxed_core" not in metrics
-        and all(k in metrics for k in ("linear_recovery", "declared_core"))
+        all(k in metrics for k in ("linear_recovery", "declared_core"))
         and metrics["linear_recovery"].value != metrics["declared_core"].value
     ):
         issues.append(
@@ -55,7 +54,12 @@ def extract(text: str, source: SourceRef) -> tuple[dict[str, Metric], list[Parse
 
 
 def recovery(metrics: dict[str, Metric]) -> Decimal | None:
-    for variant in ("boxed_core", "linear_recovery", "declared_core"):
+    if (
+        all(k in metrics for k in ("linear_recovery", "declared_core"))
+        and metrics["linear_recovery"].value != metrics["declared_core"].value
+    ):
+        return None
+    for variant in ("linear_recovery", "declared_core"):
         if variant in metrics:
             return metrics[variant].value
     return None

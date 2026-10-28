@@ -14,7 +14,7 @@ from .domain import (
     SourceRef,
 )
 
-NUMBER = r"\d+(?:[.,]\d+)?"
+NUMBER = r"[−-]?\d+(?:[.,]\d+)?"
 DASH = r"[-–—−‑]"
 INTERVAL = re.compile(rf"(?<![\d.,])({NUMBER})\s*{DASH}\s*({NUMBER})\s*м?", re.I)
 RUN = re.compile(r"^Долбление\s*№?\s*(\d+)\b", re.I)
@@ -36,22 +36,10 @@ SIGNATURE = re.compile(
     re.I,
 )
 WELL = re.compile(r"\bСкв(?:ажина)?\.?\s*(?:№\s*)?([\w-]+)", re.I)
-LITH = re.compile(
-    r"^(?:[=+@-]\s*)?(?:\d+(?:[.,]\d+)?\s*м\s*[-–—:]?\s*)?"
-    r"(?P<rock>песчаник(?:и)?|алевролит(?:ы)?|аргиллит(?:ы)?|глина|глины|известняк(?:и)?|доломит(?:ы)?|мергель|"
-    r"конгломерат|брекчия|гравелит|туф|базальт|диабаз|уголь)\b",
-    re.I,
-)
-MIXED = re.compile(r"\b(?:переслаиван\w*|чередован\w*|перемеж\w*|смешан\w*)\b", re.I)
-UV = re.compile(
-    r"(?:[\w -]{0,35}запах\w*\s+нефти|[\w ,()-]{0,70}пропитк\w*\s+нефтью|"
-    r"нефтенасыщенн\w*)",
-    re.I,
-)
 
 
 def decimal(text: str) -> Decimal:
-    return Decimal(text.replace(",", "."))
+    return Decimal(text.replace(",", ".").replace("−", "-"))
 
 
 def intervals(text: str) -> list[DepthInterval]:
@@ -82,17 +70,9 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
         issues.append(
             ParseIssue("missing_thickness", "Начальная мощность не найдена.", source=layer.source)
         )
-    match = LITH.match(text)
-    if match and not MIXED.search(text[:250]):
-        # Multiple named lithologies in the opening phrase are ambiguous.
-        opening = re.split(r"(?<!\d)[.;]|\.(?!\d)", text, maxsplit=1)[0]
-        rocks = re.findall(
-            r"\b(песчаник|алевролит|аргиллит|глин|известняк|доломит|мергел|угол)\w*",
-            opening,
-            re.I,
-        )
-        if len({r.casefold() for r in rocks}) <= 1:
-            layer.lithology = match["rock"].capitalize()
+    from .semantics import hydrocarbons, lithology
+
+    layer.lithology = lithology(text)
     if layer.lithology is None:
         issues.append(
             ParseIssue(
@@ -101,12 +81,7 @@ def _finish(layer: Layer, issues: list[ParseIssue]) -> None:
                 source=layer.source,
             )
         )
-    # Keep literal evidence only, including negation; never infer saturation.
-    evidence = []
-    for sentence in re.split(r"(?<=[.!?])\s+", text):
-        if UV.search(sentence):
-            evidence.append(sentence)
-    layer.hydrocarbons = " ".join(evidence) or None
+    layer.hydrocarbons = hydrocarbons(layer.full_text)
     if not re.search(r"от\s+верха\s*\.?$", text, re.I):
         issues.append(
             ParseIssue(
@@ -172,7 +147,22 @@ def parse_document(
         run.recovered = recovery(run.metrics)
         if metric_issues:
             run.recovered = None
-        run.no_core = run.recovered == 0 and "boxed_core" in run.metrics and not run.layers
+        # Boxing proves zero only for an explicitly empty interval, never normal K.
+        zero_boxed = "boxed_core" in run.metrics and run.metrics["boxed_core"].value == 0
+        no_recovery = bool(re.search(r"керн\s+не\s+поднят", text, re.I))
+        run.no_core = not run.layers and (run.recovered == 0 or zero_boxed or no_recovery)
+        if run.no_core:
+            if run.recovered not in (None, 0):
+                result.issues.append(
+                    ParseIssue(
+                        "zero_recovery_conflict",
+                        "Нулевой и положительный вынос одновременно; требуется проверка источника.",
+                        "error",
+                        run.source,
+                    )
+                )
+            else:
+                run.recovered = Decimal(0)
         computed(run.metrics, run.drilled, run.recovered, run.source)
 
     for block in document.blocks:
@@ -215,9 +205,25 @@ def parse_document(
             layer = new_layer
             stopped = False
         elif STRATUM.match(text):
-            finish_layer()
             stratum = text
             stratum_source = block.source
+            if layer is not None and not re.search(
+                r"от\s+верха\s*\.?$",
+                layer.full_text or "\n".join(b.text for b in layer.body_blocks),
+                re.I,
+            ):
+                layer.stratum = None
+                layer.stratum_source = None
+                layer.body_blocks.append(block)
+                result.issues.append(
+                    ParseIssue(
+                        "stratum_ambiguous",
+                        "Название пласта внутри незавершённого слоя: слой сохранён целиком, S оставлена пустой.",
+                        source=layer.source,
+                    )
+                )
+            else:
+                finish_layer()
             result.classified.append((block.source, "stratum"))
         elif SUMMARY.match(text) or SIGNATURE.match(text):
             finish_layer()

@@ -25,20 +25,20 @@ def test_runs_layers_intervals_and_provenance(sample):
     assert [[item.number for item in r.layers] for r in result.runs] == [[1, 3], [1]]
     layer = result.layers[0]
     assert layer.drilling is not None and layer.gis is not None
-    assert layer.hydrocarbons is not None
+    assert layer.hydrocarbons is None  # Answer 10: absence is not a positive UV sign.
     assert layer.drilling.top == Decimal("100")
     assert layer.gis.top == Decimal("100.50")
     assert layer.declared_thickness == Decimal("2.00")
     assert layer.full_text == "\n".join(SYNTHETIC[7:9])
     assert layer.raw_text == layer.full_text
-    assert "Запах нефти отсутствует" in layer.hydrocarbons
+    assert "Запах\nнефти отсутствует" in layer.full_text
     assert layer.stratum_source is not None
     assert result.layers[2].stratum == "Доюрский комплекс"
     assert not any(
         "Всего" in item.full_text or "Геолог" in item.full_text for item in result.layers
     )
     assert "layer_number_gap" in [i.code for i in result.issues]
-    assert result.layers[1].lithology is None
+    assert result.layers[1].lithology == "Аргиллит / Песчаник"  # Answer 9.
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ def test_numbered_interval_keeps_overlap_critical():
             "2м – Алевролит.",
         ]
     )
-    assert result.has_errors
+    assert result.status == "REVIEW_REQUIRED"
     assert "layer_overlap" in {i.code for i in result.issues}
     assert [layer.number for layer in result.layers] == [1, 2]
 

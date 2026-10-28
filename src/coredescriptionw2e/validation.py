@@ -30,6 +30,11 @@ REVIEW_CODES = frozenset(
         "summary_conflict",
         "core_recovery_exceeds_drilled",
         "core_drilled_mismatch",
+        "split_ambiguous",
+        "stratum_ambiguous",
+        "suppressed_duplicate",
+        "recovery_exceeds_drilled",
+        "summary_scope_incomplete",
     }
 )
 
@@ -46,7 +51,7 @@ def validate(result: ParseResult) -> list[ParseIssue]:
         elif interval.top < 0 or interval.top >= interval.bottom:
             issue("invalid_interval", f"Некорректный интервал: {label}.", source, True)
 
-    if not result.layers:
+    if not result.layers and not any(run.no_core for run in result.runs):
         issue("no_layers", "Слои не найдены.", None, True)
     if not result.metadata.well:
         issue("missing_well", "Номер скважины отсутствует; поле оставлено пустым.", None)
@@ -103,6 +108,16 @@ def validate(result: ParseResult) -> list[ParseIssue]:
             and run.recovered > run.drilled + TOLERANCE
         ):
             issue("recovery_exceeds_drilled", "Вынос превышает проходку.", run.source, True)
+        if "computed_percent" in run.metrics and "declared_percent" in run.metrics:
+            if (
+                abs(run.metrics["computed_percent"].value - run.metrics["declared_percent"].value)
+                > result.percent_tolerance
+            ):
+                issue(
+                    "percent_mismatch",
+                    "Исходный процент Word расходится с K/J; в L используется формула.",
+                    run.source,
+                )
         if (
             run.drilled is not None
             and run.drilling
@@ -116,6 +131,10 @@ def validate(result: ParseResult) -> list[ParseIssue]:
         previous_gis: DepthInterval | None = None
         previous_number = 0
         for layer in run.layers:
+            if layer.declared_thickness is not None and layer.declared_thickness < 0:
+                issue(
+                    "invalid_thickness", "Отрицательная исходная мощность слоя.", layer.source, True
+                )
             if layer.number in seen:
                 issue(
                     "duplicate_layer",
@@ -161,13 +180,6 @@ def validate(result: ParseResult) -> list[ParseIssue]:
                         layer.source,
                         True,
                     )
-                if previous and layer.drilling.top < previous.bottom - TOLERANCE:
-                    issue(
-                        "layer_overlap",
-                        "Интервалы слоёв перекрываются или идут назад.",
-                        layer.source,
-                        True,
-                    )
                 if run.drilling and (
                     layer.drilling.top < run.drilling.top - TOLERANCE
                     or layer.drilling.bottom > run.drilling.bottom + TOLERANCE
@@ -189,7 +201,29 @@ def validate(result: ParseResult) -> list[ParseIssue]:
                     )
                 previous = layer.drilling
         # Recovery can be less than drilling; no false coverage equality gate.
+    for run in result.runs:
+        for index, layer in enumerate(run.layers):
+            for earlier in run.layers[:index]:
+                if (
+                    layer.drilling
+                    and earlier.drilling
+                    and max(layer.drilling.top, earlier.drilling.top)
+                    < min(layer.drilling.bottom, earlier.drilling.bottom) - TOLERANCE
+                ):
+                    issues.append(
+                        ParseIssue(
+                            "layer_overlap",
+                            "Перекрывающиеся исходные интервалы: проверьте обе строки; значения сохранены.",
+                            "warning",
+                            layer.source,
+                            (earlier.source,),
+                        )
+                    )
     for key, attr in (("declared_drilled", "drilled"), ("linear_recovery", "recovered")):
+        if key == "linear_recovery" and key in result.totals:
+            result.reconciliation_notes[key] = (
+                "Итог «поднято керна» не доказывает семантику линейного выноса; возможен учёт коробок. Сопоставимость и объём учёта проверить вручную."
+            )
         known = [getattr(run, attr) for run in result.runs]
         if key in result.totals and all(v is not None for v in known):
             total = sum(known, Decimal(0))
@@ -198,7 +232,7 @@ def validate(result: ParseResult) -> list[ParseIssue]:
             if abs(total - result.totals[key].value) > TOLERANCE:
                 issue(
                     "summary_mismatch",
-                    "Сумма метрик долблений расходится с итогом скважины.",
+                    "Сумма исходных метрик долблений расходится с итогом Word; проверьте сопоставимость (коробки/линейный вынос) и объём учёта. Исходные записи имеют приоритет.",
                     result.totals[key].source,
                 )
         elif key in result.totals:
@@ -215,9 +249,7 @@ def validate_core(result: ParseResult) -> list[ParseIssue]:
 
     issues = []
     seen = {}
-    candidates = set()
-    previous = None
-    for index, record in enumerate(result.cores):
+    for index, record in enumerate(result.active_cores):
 
         def issue(
             code: str, message: str, error: bool = False, source: SourceRef = record.source
@@ -249,10 +281,19 @@ def validate_core(result: ParseResult) -> list[ParseIssue]:
                 "percent_mismatch",
                 "Исходный процент расходится с расчётным; исходные значения сохранены.",
             )
-        if previous and record.drilling.top < previous.bottom - TOLERANCE:
-            issue("core_overlap", "Перекрытие интервалов отбора; исходные значения сохранены.")
-        previous = record.drilling
-        for earlier in result.cores[:index]:
+        for earlier in result.active_cores[:index]:
+            if (
+                max(record.drilling.top, earlier.drilling.top)
+                < min(record.drilling.bottom, earlier.drilling.bottom) - TOLERANCE
+            ):
+                issues.append(
+                    ParseIssue(
+                        "core_overlap",
+                        "Перекрытие интервалов отбора; проверьте обе исходные записи.",
+                        source=record.source,
+                        related_sources=(earlier.source,),
+                    )
+                )
             if (
                 earlier.drilling == record.drilling
                 and earlier.drilled == record.drilled
@@ -260,7 +301,7 @@ def validate_core(result: ParseResult) -> list[ParseIssue]:
             ):
                 issue(
                     "possible_duplicate_core",
-                    "Возможный дубль интервала и метрик; запись сохранена. См. альтернативную сверку.",
+                    "Совпали интервал и метрики, но полный дубль не доказан: запись сохранена.",
                 )
                 issues.append(
                     ParseIssue(
@@ -269,41 +310,53 @@ def validate_core(result: ParseResult) -> list[ParseIssue]:
                         source=earlier.source,
                     )
                 )
-                candidates.add(index)
                 break
     for interval in result.no_core:
+        if interval.drilled is not None and interval.drilled <= 0:
+            issues.append(
+                ParseIssue(
+                    "invalid_recovery",
+                    "Неположительная объявленная проходка нулевого интервала.",
+                    "error",
+                    interval.source,
+                )
+            )
         if interval.drilling.top < 0 or interval.drilling.top >= interval.drilling.bottom:
             issues.append(
                 ParseIssue(
                     "invalid_interval", "Некорректный интервал без керна.", "error", interval.source
                 )
             )
-    no_core_drilled = sum((r.drilling.thickness for r in result.no_core), Decimal(0))
     result.reconciliation["all_records"] = sums(result.cores)
-    result.reconciliation["all_records"]["no_core_drilled"] = no_core_drilled
-    result.reconciliation["suspected_duplicate_excluded"] = sums(
-        [r for i, r in enumerate(result.cores) if i not in candidates]
-    )
-    result.reconciliation["suspected_duplicate_excluded"]["no_core_drilled"] = no_core_drilled
-    attempted = sum(
-        (r.drilling.thickness for r in result.no_core if r.kind == "NO_RECOVERY"), Decimal(0)
-    )
-    result.reconciliation["suspected_duplicate_excluded_with_no_recovery"] = {
-        **result.reconciliation["suspected_duplicate_excluded"],
-        "drilled": result.reconciliation["suspected_duplicate_excluded"]["drilled"] + attempted,
-        "attempted_no_recovery_drilled": attempted,
+    result.reconciliation["exported_unique"] = sums(result.active_cores)
+    zero_intervals = [r for r in result.no_core if r.kind == "NO_RECOVERY"]
+    known_zero_j = sum((r.drilled for r in zero_intervals if r.drilled is not None), Decimal(0))
+    result.reconciliation["exported_unique"]["drilled"] += known_zero_j
+    result.reconciliation["zero_recovery_intervals"] = {
+        "known_declared_drilled": known_zero_j,
+        "unknown_drilled_count": Decimal(sum(r.drilled is None for r in zero_intervals)),
+        "sampling_interval_span_not_J": sum(
+            (r.drilling.thickness for r in zero_intervals), Decimal(0)
+        ),
     }
     result.reconciliation["source_declared"] = {k: m.value for k, m in result.totals.items()}
     for key, sum_key in (("declared_drilled", "drilled"), ("linear_recovery", "recovered")):
+        if key == "declared_drilled" and any(r.drilled is None for r in zero_intervals):
+            issues.append(
+                ParseIssue(
+                    "summary_scope_incomplete",
+                    "Проходка нулевого интервала не объявлена; сумма J неполная. Длина интервала показана отдельно, без подстановки в J.",
+                )
+            )
         if (
             key in result.totals
-            and abs(result.totals[key].value - result.reconciliation["all_records"][sum_key])
+            and abs(result.totals[key].value - result.reconciliation["exported_unique"][sum_key])
             > TOLERANCE
         ):
             issues.append(
                 ParseIssue(
                     "summary_mismatch",
-                    "Сумма всех записей расходится с итогом источника; альтернативная сверка не изменяет экспорт.",
+                    "Сумма уникальных исходных записей расходится с итогом Word; исходные записи имеют приоритет. Проверьте объём и семантику итогов.",
                     source=result.totals[key].source,
                 )
             )

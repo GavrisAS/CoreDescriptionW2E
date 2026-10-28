@@ -72,6 +72,8 @@ def bundle(tmp_path):
             "review_documents": 2,
             "core_interval_gate": "PASS",
             "review_policy_gate": "PASS",
+            "business_rules_gate": "PASS",
+            "output_schema": "core24-v1",
         },
     }
     with zipfile.ZipFile(tmp_path / name, "w") as z:

@@ -73,7 +73,10 @@ def verify_output(path: Path) -> None:
     workbook = load_workbook(path, data_only=False)
     try:
         sheet = workbook["Лист1"]
-        assert sheet.max_row == 4 and sheet.max_column == 23
+        assert sheet.max_row == 4 and sheet.max_column == 24
+        assert sheet["X2"].value == "TEST-42"
+        assert sheet["V2"].value is None
+        assert sheet["U3"].value == "Аргиллит / Песчаник"
         assert [sheet.cell(r, 20).value for r in range(2, 5)] == [1, 3, 1]
         assert sheet["N2"].value == 100 and sheet["P2"].value == 100.5
         assert sheet["N4"].value == 103 and sheet["P4"].value == 103.25
@@ -138,23 +141,27 @@ def verify_review(path: Path, *, core: bool) -> None:
     book = load_workbook(path)
     try:
         main = book["Лист1"]
-        assert main.max_row == 4
+        assert main.max_row == (5 if core else 4)
         assert book.active.title == "Контроль"
-        assert "ТРЕБУЕТ ПРОВЕРКИ" in book["Контроль"]["A1"].value
+        assert "Требует проверки" == book["Контроль"]["A1"].value
         if core:
-            assert [main.cell(r, 23).value for r in range(2, 5)] == [
-                "Верх: песчаник учебный.\nНиз: аргиллит учебный.",
+            assert [main.cell(r, 23).value for r in range(2, 6)] == [
+                "Верх: песчаник учебный.",
+                "Низ: аргиллит учебный.",
                 "=1+1; Алевролит вымышленный.",
                 "Повтор физической записи. Все строки сохраняются.",
             ]
             assert all(
-                main.cell(r, c).value is None for r in range(2, 5) for c in (*range(13, 21),)
+                main.cell(r, c).value is None for r in range(2, 6) for c in (*range(13, 21),)
             )
-            assert main["W3"].data_type == "s"
+            assert main["W4"].data_type == "s"
             codes = [
-                book["Контроль"].cell(r, 1).value for r in range(1, book["Контроль"].max_row + 1)
+                book["Контроль"].cell(r, 12).value for r in range(1, book["Контроль"].max_row + 1)
             ]
-            assert codes.count("NO_CORE_INTERVAL") == 2
+            assert (
+                sum(c.value == "DRILLED_WITHOUT_CORE" for row in book["Источники"] for c in row)
+                == 2
+            )
             assert {
                 "percent_mismatch",
                 "possible_duplicate_core",
@@ -165,7 +172,7 @@ def verify_review(path: Path, *, core: bool) -> None:
             assert main["N3"].value == 101.75  # original overlap is not trimmed
             assert main["N2"].fill.fgColor.rgb == "00FFF2CC"
             assert main["N3"].fill.fgColor.rgb == "00FFF2CC"
-        for row in range(2, 5):
+        for row in range(2, 6 if core else 5):
             assert main.cell(row, 12).value == f'=IFERROR(K{row}/J{row},"")'
             assert main.cell(row, 12).number_format == "0.00%"
     finally:
@@ -242,6 +249,7 @@ def frozen_smoke(folder: Path) -> int:
             )
             == 3
         )
+        business_smoke(folder / "business-inputs", template)
         report.write_text(
             json.dumps(
                 {
@@ -253,6 +261,8 @@ def frozen_smoke(folder: Path) -> int:
                     "review_documents": 2,
                     "core_interval_gate": "PASS",
                     "review_policy_gate": "PASS",
+                    "business_rules_gate": "PASS",
+                    "output_schema": "core24-v1",
                     "backend": "ms-doc-piece-table+olefile",
                     "frozen": bool(getattr(sys, "frozen", False)),
                 }
@@ -265,3 +275,37 @@ def frozen_smoke(folder: Path) -> int:
             json.dumps({"status": "FAIL", "error_type": type(exc).__name__}), encoding="utf-8"
         )
         return 1
+
+
+def business_smoke(inputs: Path, template: Path) -> None:
+    """New contract exercised by the unpacked executable, not source tests alone."""
+    inputs.mkdir()
+    word = inputs / "Business.docx"
+    create_core_docx(word)
+    document = Document(str(word))
+    table = document.tables[0]
+    original = table.rows[0]
+    left, right = table.add_row().cells
+    left.text = original.cells[0].text.replace("Керн № 1", "Керн № 9")
+    right.text = original.cells[1].text
+    left, right = table.add_row().cells
+    left.text = "Керн 10\nИнт. 17–19 м\nПроходка 2 м, в коробках 0 м"
+    right.text = "Керн не поднят."
+    document.save(str(word))
+    result = convert_batch(inputs, template)[0]
+    assert result.output is not None and result.parsed is not None
+    assert len(result.parsed.suppressed_duplicates) == 1
+    assert result.parsed.reconciliation["exported_unique"] == {"drilled": 8, "recovered": 5}
+    book = load_workbook(result.output)
+    try:
+        main = book["Лист1"]
+        assert main.max_column == 24 and main.max_row == 6
+        assert main["X2"].value == "SYN-CORE"
+        assert main["K6"].value == 0 and main["J6"].value == 2
+        assert main["W6"].value is None and main["T6"].value is None
+        assert main["L6"].value == '=IFERROR(K6/J6,"")'
+        assert main["U2"].value == "Песчаник" and main["U3"].value == "Аргиллит"
+        assert book["Контроль"]["A1"].value == "Требует проверки"
+        assert any(c.hyperlink for row in book["Контроль"] for c in row)
+    finally:
+        book.close()

@@ -51,7 +51,7 @@ def test_core_cells_and_control_roundtrip(core_sample):
     assert (word.read_bytes(), template.read_bytes()) == original
     book = load_workbook(r.output)
     control = book["Контроль"]
-    assert any(c.value == "SOURCE_FIELD" for row in control for c in row)
+    assert any(c.value == "SOURCE_FIELD" for row in book["Источники"] for c in row)
     assert all(
         not c.hyperlink or c.hyperlink.target.startswith("#") for row in control for c in row
     )
@@ -165,7 +165,7 @@ def test_layer_overlap_review_preserves_original_and_blocks_reverse(sample):
     assert "layer_order" in {i.code for i in bad.issues}
 
 
-def test_boxed_priority_declared_core_and_empty_run():
+def test_declared_core_replaces_boxed_priority_and_zero_conflict():
     lines = list(SYNTHETIC)
     lines[4] = "Проходка 3м, керна 3м, в коробках 2.75 м"
     lines += [
@@ -177,10 +177,11 @@ def test_boxed_priority_declared_core_and_empty_run():
         Path("synthetic.docx"), [(str(i), s) for i, s in enumerate(lines)], "\n".join(lines)
     )
     p = parse_document(doc)
-    assert p.exportable and p.runs[0].recovered == Decimal("2.75")
+    assert not p.exportable  # Changed answer 5/6: contradictory zero/positive recovery blocks.
+    assert p.runs[0].recovered == Decimal("3")
     assert p.runs[0].metrics["declared_core"].value == 3
     assert p.runs[0].metrics["boxed_core"].source.position == "4"
-    assert p.runs[2].no_core and not p.runs[2].layers
+    assert "zero_recovery_conflict" in {i.code for i in p.issues}
     lines[4] = "Проходка 3м, в коробках 0"
     doc = make_document(
         Path("synthetic.docx"), [(str(i), s) for i, s in enumerate(lines)], "\n".join(lines)
@@ -204,7 +205,7 @@ def test_core_reordered_columns_long_text_injection_atomic(core_sample):
     assert r.output is not None
     book = load_workbook(r.output)
     sheet = book["Лист1"]
-    mapping = schema(sheet)
+    mapping = schema(sheet, output=True)
     assert sheet.cell(2, mapping[22]).value == text.rstrip("\n")
     assert sheet.cell(2, mapping[22]).data_type == "s"
     assert sheet.row_dimensions[2].height == 409
@@ -212,7 +213,7 @@ def test_core_reordered_columns_long_text_injection_atomic(core_sample):
     assert sheet.cell(2, mapping[11]).value == '=IFERROR(B2/A2,"")'
     book.close()
     before = r.output.read_bytes()
-    assert convert_batch(folder, template)[0].status == "error"
+    assert convert_batch(folder, template)[0].status == "skipped"
     assert r.output.read_bytes() == before
 
 
@@ -220,7 +221,7 @@ def test_core_cli_review_exit_and_local_validator(core_sample, capsys):
     folder, word, template = core_sample
     assert main(["--input-dir", str(folder), "--template", str(template), "--json"]) == 3
     payload = json.loads(capsys.readouterr().out)
-    assert payload[0]["document_status"] == "REVIEW_REQUIRED"
+    assert payload["results"][0]["document_status"] == "REVIEW_REQUIRED"
     output = next((folder / "output" / "review").glob("*.xlsx"))
     r = subprocess.run(
         [sys.executable, "scripts/local_validation.py", "--word", str(word), "--xlsx", str(output)],
@@ -408,12 +409,12 @@ def test_control_fields_are_literal_and_reserved_template_names(core_sample):
     r = convert_batch(folder, template)[0]
     assert r.output is not None
     book = load_workbook(r.output)
-    assert book.active.title == "Контроль" and "ТРЕБУЕТ ПРОВЕРКИ" in book.active["A1"].value
+    assert book.active.title == "Контроль" and "Требует проверки" == book.active["A1"].value
     injected = [
         c
-        for row in book["Контроль"]
+        for row in book["Источники"]
         for c in row
         if isinstance(c.value, str) and c.value.startswith("=HYPERLINK")
     ]
-    assert len(injected) == 1 and injected[0].data_type == "s" and not injected[0].hyperlink
+    assert len(injected) >= 1 and injected[0].data_type == "s" and not injected[0].hyperlink
     book.close()

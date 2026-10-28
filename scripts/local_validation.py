@@ -1,4 +1,4 @@
-"""Private local audit; reports belong in the ignored data directory, never CI."""
+"""Private local audit. Source text and reports must stay in the ignored data folder."""
 
 import argparse
 import json
@@ -10,9 +10,99 @@ from pathlib import Path
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
 
+from coredescriptionw2e.domain import CorePart, Layer
 from coredescriptionw2e.excel.writer import schema
+from coredescriptionw2e.export_rows import export_rows
 from coredescriptionw2e.parser import parse_document
 from coredescriptionw2e.word.common import read_word
+
+
+def audit(parsed, workbook, sheet, mapping, word, xlsx):
+    entries = export_rows(parsed)
+    checks = {
+        "rows": sheet.max_row == len(entries) + 1,
+        "columns": sheet.max_column == 24,
+        "control": "Контроль" in workbook.sheetnames,
+        "status_ru": workbook["Контроль"]["A1"].value
+        in {"Проверено автоматически", "Требует проверки"},
+        "review_visible": parsed.status != "REVIEW_REQUIRED" or workbook.active.title == "Контроль",
+        "w_complete": True,
+        "depth_values": True,
+        "recovery_all_run_rows": True,
+        "no_invented_layers": True,
+        "numbers": True,
+        "unknown_metadata_blank": True,
+        "source_reference": True,
+        "word_well_preserved": True,
+        "text_and_numeric_tokens": True,
+        "split_coverage": True,
+        "internal_links": True,
+    }
+    for row, (owner, entry) in enumerate(entries, 2):
+        original = entry.full_text if entry else None
+        w = sheet.cell(row, mapping[22])
+        checks["w_complete"] &= w.value == original
+        checks["text_and_numeric_tokens"] &= re.findall(
+            r"\d+(?:[.,]\d+)?", w.value or ""
+        ) == re.findall(r"\d+(?:[.,]\d+)?", original or "")
+        for key, value in ((9, owner.drilled), (10, owner.recovered)):
+            checks["recovery_all_run_rows"] &= sheet.cell(row, mapping[key]).value == (
+                float(value) if value is not None else None
+            )
+        j, k = (get_column_letter(mapping[key]) for key in (9, 10))
+        expected_formula = (
+            f'=IFERROR({k}{row}/{j}{row},"")'
+            if owner.drilled is not None and owner.drilled > 0 and owner.recovered is not None
+            else None
+        )
+        checks["recovery_all_run_rows"] &= sheet.cell(row, mapping[11]).value == expected_formula
+        checks["recovery_all_run_rows"] &= sheet.cell(row, mapping[11]).number_format == "0.00%"
+        for key, interval in (
+            (7, owner.drilling),
+            (13, entry.drilling if isinstance(entry, Layer) else None),
+            (15, entry.gis if isinstance(entry, Layer) else None),
+        ):
+            for offset, value in enumerate(
+                (interval.top, interval.bottom) if interval else (None, None)
+            ):
+                checks["depth_values"] &= sheet.cell(row, mapping[key + offset]).value == (
+                    float(value) if value is not None else None
+                )
+        checks["numbers"] &= sheet.cell(row, mapping[19]).value == (
+            entry.number if isinstance(entry, Layer) else None
+        )
+        if isinstance(entry, CorePart) or entry is None:
+            checks["no_invented_layers"] &= all(
+                sheet.cell(row, mapping[key]).value is None for key in (12, 13, 14, 15, 16, 19)
+            )
+        checks["unknown_metadata_blank"] &= all(
+            sheet.cell(row, mapping[key]).value is None for key in (1, 2, 4, 5, 17)
+        )
+        checks["source_reference"] &= sheet.cell(row, mapping[6]).value == os.path.relpath(
+            word.resolve(), xlsx.parent.resolve()
+        )
+        checks["word_well_preserved"] &= (
+            sheet.cell(row, mapping[3]).value == parsed.metadata.well == sheet.cell(row, 24).value
+        )
+    for core in parsed.cores:
+        checks["split_coverage"] &= "\n".join(p.full_text for p in core.parts) == core.full_text
+        checks["split_coverage"] &= [
+            b for p in core.parts for b in p.body_blocks
+        ] == core.body_blocks
+    for ws in workbook:
+        for cells in ws:
+            for cell in cells:
+                if cell.hyperlink:
+                    target = cell.hyperlink.target
+                    if not target or not target.startswith("#'"):
+                        checks["internal_links"] = False
+                        continue
+                    title, address = target[2:].rsplit("'!", 1)
+                    title = title.replace("''", "'")
+                    checks["internal_links"] &= title in workbook.sheetnames
+                    if title in workbook.sheetnames:
+                        checks["internal_links"] &= workbook[title][address].value is not None
+    return checks
 
 
 def main() -> int:
@@ -25,215 +115,57 @@ def main() -> int:
     args = parser.parse_args()
     parsed = parse_document(read_word(args.word))
     workbook = load_workbook(args.xlsx, data_only=False)
-    sheet = next(
-        (
+    try:
+        sheet = next(
             s
-            for s in workbook.worksheets
-            if s.max_column == 23 and s.title not in {"Контроль", "Описание"}
-        ),
-        None,
-    )
-    assert sheet is not None
-    mapping = schema(sheet)
-    if parsed.mode == "CORE_INTERVAL":
-        return audit_core(parsed, workbook, sheet, mapping, args)
-    descriptions = [sheet.cell(i + 2, mapping[22]).value for i in range(len(parsed.layers))]
-    summary = {
-        "runs": len(parsed.runs),
-        "layers": len(parsed.layers),
-        "distribution": [len(run.layers) for run in parsed.runs],
-        "run_details": [
-            {
-                "number": run.number,
-                "interval": [str(run.drilling.top), str(run.drilling.bottom)]
-                if run.drilling
-                else None,
-                "drilled": str(run.drilled) if run.drilled is not None else None,
-                "recovered": str(run.recovered) if run.recovered is not None else None,
-                "layer_numbers": [layer.number for layer in run.layers],
-                "layers": [
-                    {
-                        "number": layer.number,
-                        "interval": [str(layer.drilling.top), str(layer.drilling.bottom)]
-                        if layer.drilling
-                        else None,
-                        "gis": [str(layer.gis.top), str(layer.gis.bottom)] if layer.gis else None,
-                        "body_blocks": len(layer.body_blocks),
-                        "body_chars": len(layer.full_text),
-                    }
-                    for layer in run.layers
-                ],
-            }
-            for run in parsed.runs
-        ],
-        "issues": dict(Counter(issue.code for issue in parsed.issues)),
-        "errors": sum(i.severity == "error" for i in parsed.issues),
-        "undefined_lithology": sum(layer.lithology is None for layer in parsed.layers),
-        "source_end_markers": sum(
-            bool(re.search(r"от\s+верха", layer.full_text, re.I)) for layer in parsed.layers
-        ),
-    }
-    checks = {
-        "rows": sheet.max_row == len(parsed.layers) + 1,
-        "columns": sheet.max_column == 23,
-        "w_complete": descriptions == [layer.full_text for layer in parsed.layers],
-        "numbers": [sheet.cell(i + 2, mapping[19]).value for i in range(len(parsed.layers))]
-        == [layer.number for layer in parsed.layers],
-        "no_summaries_in_w": all(
-            not re.search(r"(?im)^Всего\b|^Геолог\b", str(text)) for text in descriptions
-        ),
-        "m_formulas": all(
-            sheet.cell(i + 2, mapping[12]).data_type == "f"
-            for i in range(len(parsed.layers))
-            if parsed.layers[i].drilling is not None
-        ),
-    }
-    depths_ok = True
-    for index, layer in enumerate(parsed.layers):
-        for key, interval in ((13, layer.drilling), (15, layer.gis)):
-            if interval:
-                depths_ok &= sheet.cell(index + 2, mapping[key]).value == float(interval.top)
-                depths_ok &= sheet.cell(index + 2, mapping[key + 1]).value == float(interval.bottom)
-    checks["depth_values"] = depths_ok
-    checks["unknown_metadata_blank"] = all(
-        sheet.cell(row, mapping[key]).value is None
-        for row in range(2, sheet.max_row + 1)
-        for key in (1, 2, 4, 5, 17)
-    )
-    checks["source_reference"] = all(
-        sheet.cell(row, mapping[6]).value
-        == os.path.relpath(args.word.resolve(), args.xlsx.parent.resolve())
-        for row in range(2, sheet.max_row + 1)
-    )
-    first_row = 2
-    recovery_ok = True
-    for run in parsed.runs:
-        for offset, _ in enumerate(run.layers):
-            row = first_row + offset
-            j = sheet.cell(row, mapping[9]).value
-            k = sheet.cell(row, mapping[10]).value
-            percentage = sheet.cell(row, mapping[11]).value
-            recovery_ok &= j == (float(run.drilled) if run.drilled is not None else None)
-            recovery_ok &= k == (float(run.recovered) if run.recovered is not None else None)
-            cell = sheet.cell(row, mapping[11])
-            if run.drilled is not None and run.recovered is not None:
-                drilled_col = get_column_letter(mapping[9])
-                recovered_col = get_column_letter(mapping[10])
-                recovery_ok &= percentage == f'=IFERROR({recovered_col}{row}/{drilled_col}{row},"")'
-                recovery_ok &= cell.data_type == "f"
-            else:
-                recovery_ok &= percentage is None
-            recovery_ok &= cell.number_format == "0.00%"
-        first_row += len(run.layers)
-    checks["recovery_all_run_rows"] = recovery_ok
-    if args.template:
-        template = load_workbook(args.template)
-        original_sheet = template.active
-        assert original_sheet is not None
-        checks["header_preserved"] = [c.value for c in sheet[1]] == [
-            c.value for c in original_sheet[1]
-        ]
-        examples = {str(original_sheet.cell(r, mapping[3]).value) for r in (2, 3)}
-        if parsed.metadata.well and examples != {parsed.metadata.well}:
-            summary["issues"]["template_well_conflict"] = 1
-        checks["word_well_preserved"] = all(
-            sheet.cell(r, mapping[3]).value == parsed.metadata.well
-            for r in range(2, sheet.max_row + 1)
+            for s in workbook
+            if s.max_column == 24 and s.title not in {"Контроль", "Описание", "Реестр", "Источники"}
         )
-        template.close()
-    if args.reference_docx:
-        reference = read_word(args.reference_docx)
-        original = re.sub(r"\s+", "", "\n".join(b.text for b in parsed.document.blocks))
-        independent = re.sub(r"\s+", "", "\n".join(b.text for b in reference.blocks))
-        checks["independent_text_match"] = original == independent
-    if args.expected:
-        expected = json.loads(args.expected.read_text(encoding="utf-8"))
-        checks["expected_structure"] = all(summary[key] == value for key, value in expected.items())
-    workbook.close()
-    summary["checks"] = checks
-    summary["status"] = parsed.status if all(checks.values()) and parsed.exportable else "FAIL"
-    report = args.xlsx.parent / "validation-summary.json"
-    report.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(
-        json.dumps(
-            {
-                "status": summary["status"],
-                "runs": summary["runs"],
-                "layers": summary["layers"],
-                "checks": checks,
-            },
-            ensure_ascii=False,
+        mapping = schema(sheet, output=True)
+        checks = audit(parsed, workbook, sheet, mapping, args.word, args.xlsx)
+        if args.template:
+            template = load_workbook(args.template)
+            checks["header_preserved"] = [c.value for c in sheet[1]][:23] == [
+                c.value for c in template.active[1]
+            ]
+            template.close()
+        if args.reference_docx:
+            reference = read_word(args.reference_docx)
+            checks["independent_text_match"] = re.sub(
+                r"\s+", "", parsed.document.raw_text
+            ) == re.sub(r"\s+", "", reference.raw_text)
+        summary = {
+            "mode": parsed.mode,
+            "runs": len(parsed.runs),
+            "layers": len(parsed.layers),
+            "core_records": len(parsed.cores),
+            "core_parts": sum(len(c.parts) for c in parsed.active_cores),
+            "no_core": len(parsed.no_core),
+            "suppressed_duplicates": len(parsed.suppressed_duplicates),
+            "distribution": [len(r.layers) for r in parsed.runs],
+            "issues": dict(Counter(i.code for i in parsed.issues)),
+            "reconciliation": parsed.reconciliation,
+        }
+        if args.expected:
+            expected = json.loads(args.expected.read_text(encoding="utf-8"))
+            checks["expected_structure"] = all(summary.get(k) == v for k, v in expected.items())
+        summary["checks"] = checks
+        summary["status"] = parsed.status if all(checks.values()) and parsed.exportable else "FAIL"
+        args.xlsx.with_suffix(".validation.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
         )
-    )
-    return 0 if summary["status"] in {"PASS", "REVIEW_REQUIRED"} else 1
-
-
-def audit_core(parsed, workbook, sheet, mapping, args) -> int:
-    checks = {
-        "rows": sheet.max_row == len(parsed.cores) + 1,
-        "columns": sheet.max_column == 23,
-        "control": "Контроль" in workbook.sheetnames,
-        "review_visible": workbook.active.title == "Контроль"
-        and "ТРЕБУЕТ ПРОВЕРКИ" in workbook["Контроль"]["A1"].value,
-        "no_invented_layers": all(
-            sheet.cell(row, mapping[k]).value is None
-            for row in range(2, sheet.max_row + 1)
-            for k in (12, 13, 14, 15, 16, 17, 18, 19)
-        ),
-        "w_complete": all(
-            sheet.cell(row, mapping[22]).value == core.full_text
-            for row, core in enumerate(parsed.cores, 2)
-        ),
-    }
-    if args.template:
-        template = load_workbook(args.template)
-        checks["header_preserved"] = [c.value for c in sheet[1]] == [
-            c.value for c in template.active[1]
-        ]
-        template.close()
-    if args.reference_docx:
-        reference = read_word(args.reference_docx)
-        checks["independent_text_match"] = re.sub(r"\s+", "", parsed.document.raw_text) == re.sub(
-            r"\s+", "", reference.raw_text
+        print(
+            json.dumps(
+                {
+                    k: summary[k]
+                    for k in ("mode", "status", "runs", "layers", "core_records", "checks")
+                },
+                ensure_ascii=False,
+            )
         )
-    recovery_ok = True
-    depths_ok = True
-    for row, core in enumerate(parsed.cores, 2):
-        recovery_ok &= sheet.cell(row, mapping[9]).value == float(core.drilled)
-        recovery_ok &= sheet.cell(row, mapping[10]).value == float(core.recovered)
-        j, k = (get_column_letter(mapping[key]) for key in (9, 10))
-        recovery_ok &= sheet.cell(row, mapping[11]).value == f'=IFERROR({k}{row}/{j}{row},"")'
-        recovery_ok &= sheet.cell(row, mapping[11]).number_format == "0.00%"
-        depths_ok &= sheet.cell(row, mapping[7]).value == float(core.drilling.top)
-        depths_ok &= sheet.cell(row, mapping[8]).value == float(core.drilling.bottom)
-    checks["recovery_all_run_rows"] = recovery_ok
-    checks["depth_values"] = depths_ok
-    summary = {
-        "mode": parsed.mode,
-        "status": parsed.status if all(checks.values()) and parsed.exportable else "FAIL",
-        "core_records": len(parsed.cores),
-        "no_core": len(parsed.no_core),
-        "checks": checks,
-        "issues": dict(Counter(i.code for i in parsed.issues)),
-        "reconciliation": parsed.reconciliation,
-    }
-    if args.expected:
-        expected = json.loads(args.expected.read_text(encoding="utf-8"))
-        checks["expected_structure"] = all(summary.get(key) == val for key, val in expected.items())
-        if not all(checks.values()):
-            summary["status"] = "FAIL"
-    report = args.xlsx.parent / "validation-summary.json"
-    report.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
-    )
-    workbook.close()
-    print(
-        json.dumps(
-            {k: summary[k] for k in ("mode", "status", "core_records", "no_core", "checks")},
-            ensure_ascii=False,
-        )
-    )
-    return 0 if summary["status"] == "REVIEW_REQUIRED" else 1
+        return 0 if summary["status"] in {"PASS", "REVIEW_REQUIRED"} else 1
+    finally:
+        workbook.close()
 
 
 if __name__ == "__main__":

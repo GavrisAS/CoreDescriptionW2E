@@ -6,7 +6,7 @@ from pathlib import Path
 
 from . import __version__
 from .domain import ConversionError
-from .service import convert_batch, result_summary
+from .service import batch_summary, convert_batch, result_summary
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,22 +33,28 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"error": message}, ensure_ascii=False) if args.json else message)
         return 2
     if args.json:
-        print(json.dumps([result_summary(r) for r in results], ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "summary": batch_summary(results),
+                    "results": [result_summary(r) for r in results],
+                },
+                ensure_ascii=False,
+            )
+        )
     else:
         for r in results:
             print(
-                f"{r.source.name}: { {'success': 'PASS', 'review_required': 'ТРЕБУЕТ ПРОВЕРКИ', 'unsupported': 'НЕ ПОДДЕРЖИВАЕТСЯ', 'error': 'ОШИБКА'}[r.status] }; предупреждений: {sum(i.severity == 'warning' for i in r.issues)}"
+                f"{r.source.name}: { {'success': 'PASS', 'review_required': 'ТРЕБУЕТ ПРОВЕРКИ', 'unsupported': 'НЕ ПОДДЕРЖИВАЕТСЯ', 'error': 'ОШИБКА', 'skipped': 'ПРОПУЩЕНО С ПРИЧИНОЙ'}[r.status] }; предупреждений: {sum(i.severity == 'warning' for i in r.issues)}"
             )
             if r.output:
                 print(f"  Книга: {r.output}")
             for issue in r.issues:
                 print(f"  [{issue.code}] {issue.message}")
-        print(
-            f"PASS: {sum(r.status == 'success' for r in results)}; REVIEW_REQUIRED: {sum(r.status == 'review_required' for r in results)}; ошибок/unsupported: {sum(r.status in {'error', 'unsupported'} for r in results)}."
-        )
+        print(json.dumps(batch_summary(results), ensure_ascii=False))
     return (
         1
-        if any(r.status in {"error", "unsupported"} for r in results)
+        if any(r.status in {"error", "unsupported", "skipped"} for r in results)
         else 3
         if any(r.status == "review_required" for r in results)
         else 0

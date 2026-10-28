@@ -21,7 +21,7 @@ def assert_run_rows(result):
     workbook = load_workbook(result.output)
     try:
         sheet = workbook.active
-        mapping = schema(sheet)
+        mapping = schema(sheet, output=True)
         assert sheet.max_row == 6
         assert [sheet.cell(row, mapping[19]).value for row in range(2, 7)] == [1, 2, 3, 1, 2]
         row = 2
@@ -176,8 +176,14 @@ def test_invalid_paired_metrics_do_not_publish(multi_sample, metric):
     next(p for p in doc.paragraphs if p.text.startswith("Проходка")).text = metric
     doc.save(word)
     result = convert_batch(folder, template)[0]
-    assert result.status == "error" and result.output is None
-    assert not (folder / "output").exists()
+    if "0м" in metric:
+        assert result.status == "error" and result.output is None
+        assert not list((folder / "output").rglob("*.xlsx"))
+    else:
+        # Answer 6: J<K is a controlled REVIEW, values must remain unmodified.
+        assert result.status == "review_required" and result.output is not None
+        assert result.parsed is not None
+        assert result.parsed.runs[0].recovered == 5
 
 
 def test_local_validation_catches_later_row_formula(multi_sample):

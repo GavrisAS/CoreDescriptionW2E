@@ -103,14 +103,58 @@ def parse_core_document(
         used_positions.add(row.source.position)
         if not headings:
             if NO_CORE.search(right.text):
+                zero = bool(re.search(r"керн\s+не\s+поднят", right.text, re.I))
+                without = bool(re.search(r"бурение\s+без\s+(?:отбора\s+)?керна", right.text, re.I))
+                if zero and without:
+                    result.issues.append(
+                        ParseIssue(
+                            "ambiguous_boundaries",
+                            "Смешаны нулевой выход и бурение без отбора.",
+                            "error",
+                            row.source,
+                        )
+                    )
+                    continue
+                metrics, metric_issues = extract(left.text, left.source)
+                result.issues.extend(metric_issues)
+                if not NO_CORE.fullmatch(right.text.strip().rstrip(".!")):
+                    result.issues.append(
+                        ParseIssue(
+                            "ambiguous_boundaries",
+                            "Неполное свидетельство отсутствия керна: дополнительный текст нельзя скрыть в нулевой строке.",
+                            "error",
+                            row.source,
+                        )
+                    )
+                    continue
+                if zero and recovery(metrics) not in (None, 0):
+                    result.issues.append(
+                        ParseIssue(
+                            "zero_recovery_conflict",
+                            "Положительный вынос противоречит свидетельству нуля.",
+                            "error",
+                            row.source,
+                        )
+                    )
+                if zero:
+                    computed(
+                        metrics,
+                        metrics["declared_drilled"].value
+                        if "declared_drilled" in metrics
+                        else None,
+                        Decimal(0),
+                        left.source,
+                    )
                 result.no_core.append(
                     NoCoreInterval(
                         ranges[0],
                         row.source,
                         right.text,
-                        "NO_RECOVERY"
-                        if re.search(r"керн\s+не\s+поднят", right.text, re.I)
-                        else "DRILLED_WITHOUT_CORE",
+                        "NO_RECOVERY" if zero else "DRILLED_WITHOUT_CORE",
+                        metrics["declared_drilled"].value
+                        if "declared_drilled" in metrics
+                        else None,
+                        metrics,
                     )
                 )
             else:
@@ -119,6 +163,40 @@ def parse_core_document(
                 )
             continue
         accounted += 1
+        zero_metrics, zero_issues = extract(left.text, left.source)
+        explicit_zero = recovery(zero_metrics) == 0 or (
+            "boxed_core" in zero_metrics and zero_metrics["boxed_core"].value == 0
+        )
+        zero_evidence = bool(re.fullmatch(r"керн\s+не\s+поднят[.!]?", right.text.strip(), re.I))
+        if (explicit_zero and not right.blocks) or zero_evidence:
+            result.issues.extend(zero_issues)
+            if recovery(zero_metrics) not in (None, 0):
+                result.issues.append(
+                    ParseIssue(
+                        "zero_recovery_conflict",
+                        "Противоречащие свидетельства нулевого и положительного выноса.",
+                        "error",
+                        row.source,
+                    )
+                )
+            drilled_zero = (
+                zero_metrics["declared_drilled"].value
+                if "declared_drilled" in zero_metrics
+                else None
+            )
+            computed(zero_metrics, drilled_zero, Decimal(0), left.source)
+            result.no_core.append(
+                NoCoreInterval(
+                    ranges[0],
+                    row.source,
+                    right.text or left.text,
+                    "NO_RECOVERY",
+                    drilled_zero,
+                    zero_metrics,
+                    int(headings[0][1]),
+                )
+            )
+            continue
         if (
             not right.blocks
             or any(CORE.fullmatch(b.text) for b in right.blocks)
@@ -163,17 +241,13 @@ def parse_core_document(
             metrics,
             source_fields=left.blocks,
         )
-        # Composite descriptions remain complete; U/V require separate unambiguous evidence.
         result.cores.append(record)
-        result.issues.append(
-            ParseIssue(
-                "uninterpreted_core_lithology",
-                "Литология и УВ не интерпретированы; полное описание в W.",
-                source=right.source,
-            )
-        )
     source_count = sum(bool(CORE_HEADING.fullmatch(b.text)) for b in document.blocks)
-    if accounted != source_count or len(result.cores) != source_count or not source_count:
+    if (
+        accounted != source_count
+        or len(result.cores) + sum(r.number is not None for r in result.no_core) != source_count
+        or not source_count
+    ):
         result.issues.append(
             ParseIssue(
                 "unsupported_core_layout",
@@ -208,8 +282,10 @@ def parse_core_document(
                         )
                     )
                 result.totals[key] = metric
+    from .core_parts import prepare_cores
     from .validation import validate_core
 
+    prepare_cores(result)
     result.issues.extend(validate_core(result))
     return result
 

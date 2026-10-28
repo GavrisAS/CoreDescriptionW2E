@@ -16,8 +16,8 @@ def test_batch_isolation_and_nonrecursive(sample):
     results = convert_batch(
         folder, template, progress=lambda n, total, result: progress.append((n, total))
     )
-    assert sorted(r.status for r in results) == ["error", "success"]
-    assert progress == [(1, 2), (2, 2)]
+    assert sorted(r.status for r in results) == ["error", "skipped", "success"]
+    assert progress == [(1, 3), (2, 3), (3, 3)]
     verify_output(folder / "output" / "Учебный.xlsx")
 
 
@@ -26,7 +26,8 @@ def test_collision_blocks_both(sample):
     (folder / (word.stem + ".doc")).write_bytes(b"invalid")
     results = convert_batch(folder, template)
     assert len(results) == 2 and all(r.status == "error" for r in results)
-    assert not (folder / "output").exists()
+    assert not list((folder / "output").rglob("*.xlsx"))
+    assert len(list((folder / "output").glob("batch-*.json"))) == 1
 
 
 def test_existing_output_requires_explicit_overwrite(sample):
@@ -34,7 +35,7 @@ def test_existing_output_requires_explicit_overwrite(sample):
     first = convert_batch(folder, template)[0]
     assert first.output is not None
     original = first.output.read_bytes()
-    assert convert_batch(folder, template)[0].status == "error"
+    assert convert_batch(folder, template)[0].status == "skipped"
     assert first.output.read_bytes() == original
     assert convert_batch(folder, template, overwrite=True)[0].status == "success"
 

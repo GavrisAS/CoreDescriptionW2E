@@ -3,8 +3,8 @@
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QThread, QTimer, Signal, Slot
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtCore import QThread, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QCloseEvent, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -13,18 +13,30 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QProgressBar,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QWidget,
 )
 
 from coredescriptionw2e import __version__
 from coredescriptionw2e.domain import ConversionError, ConversionResult
-from coredescriptionw2e.service import convert_batch
+from coredescriptionw2e.service import batch_summary, convert_batch
+
+RESULT_RU = {
+    "success": "Проверено автоматически",
+    "review_required": "Требует проверки",
+    "unsupported": "Не поддерживается",
+    "error": "Ошибка",
+    "skipped": "Пропущено с причиной",
+}
 
 
 class Worker(QThread):
     progress = Signal(int, int, str)
     completed = Signal(int, int, int, int, str)
+    file_result = Signal(object)
+    counters = Signal(object)
 
     def __init__(self, folder: Path, template: Path, parent: QWidget) -> None:
         super().__init__(parent)
@@ -32,6 +44,7 @@ class Worker(QThread):
         self.template = template
 
     def update(self, count: int, total: int, result: ConversionResult) -> None:
+        self.file_result.emit(result)
         errors = [f"[{i.code}] {i.message}" for i in result.issues]
         self.progress.emit(
             count,
@@ -44,6 +57,7 @@ class Worker(QThread):
     def run(self) -> None:
         try:
             results = convert_batch(self.folder, self.template, progress=self.update)
+            self.counters.emit(batch_summary(results))
             success = sum(r.status == "success" for r in results)
             warnings = sum(i.severity == "warning" for r in results for i in r.issues)
             review = sum(r.status == "review_required" for r in results)
@@ -61,7 +75,7 @@ class Window(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"CoreDescriptionW2E {__version__}")
-        self.resize(720, 330)
+        self.resize(1050, 640)
         self.worker: Worker | None = None
         self.close_after = False
         layout = QGridLayout(self)
@@ -88,9 +102,18 @@ class Window(QWidget):
         self.status = QLabel("Выберите папку и шаблон. Результаты: папка Word/output.")
         self.details = QTextEdit()
         self.details.setReadOnly(True)
+        self.results = QTableWidget(0, 4)
+        self.results.setHorizontalHeaderLabels(
+            ["Word-файл", "Исход", "Причина / ограничения", "Результат (двойной щелчок)"]
+        )
+        self.results.cellDoubleClicked.connect(self.open_result)
+        self.open_output = QPushButton("Открыть результаты и приватный batch-отчёт")
+        self.open_output.clicked.connect(self.open_folder)
         layout.addWidget(self.bar, 3, 0, 1, 3)
         layout.addWidget(self.status, 4, 0, 1, 3)
-        layout.addWidget(self.details, 5, 0, 1, 3)
+        layout.addWidget(self.results, 5, 0, 1, 3)
+        layout.addWidget(self.open_output, 6, 0, 1, 3)
+        layout.addWidget(self.details, 7, 0, 1, 3)
 
     @Slot()
     def choose_folder(self) -> None:
@@ -112,12 +135,48 @@ class Window(QWidget):
             return
         self.fill.setEnabled(False)
         self.details.clear()
+        self.results.setRowCount(0)
         self.bar.setRange(0, 0)
         self.worker = Worker(Path(self.folder.text()), Path(self.template.text()), self)
         self.worker.progress.connect(self.update_progress)
+        self.worker.file_result.connect(self.add_result)
+        self.worker.counters.connect(self.show_counters)
         self.worker.completed.connect(self.complete)
         self.worker.finished.connect(self.release_worker)
         self.worker.start()
+
+    @Slot(object)
+    def add_result(self, result: ConversionResult) -> None:
+        row = self.results.rowCount()
+        self.results.insertRow(row)
+        for column, text in enumerate(
+            (
+                result.source.name,
+                RESULT_RU[result.status],
+                "; ".join(dict.fromkeys(i.message for i in result.issues)),
+                str(result.output) if result.output else "",
+            )
+        ):
+            item = QTableWidgetItem(text)
+            item.setToolTip(text)
+            self.results.setItem(row, column, item)
+        self.results.setColumnWidth(0, 220)
+        self.results.setColumnWidth(1, 180)
+        self.results.setColumnWidth(2, 360)
+
+    @Slot(object)
+    def show_counters(self, counts: dict[str, int]) -> None:
+        self.details.append("; ".join(f"{key}={value}" for key, value in counts.items()))
+
+    @Slot(int, int)
+    def open_result(self, row: int, column: int) -> None:
+        item = self.results.item(row, 3)
+        if item and item.text():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(item.text()))
+
+    @Slot()
+    def open_folder(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(self.folder.text()) / "output")))
 
     @Slot(int, int, str)
     def update_progress(self, value: int, total: int, text: str) -> None:
@@ -129,7 +188,7 @@ class Window(QWidget):
     def complete(self, success: int, review: int, errors: int, warnings: int, message: str) -> None:
         self.status.setText(
             message
-            or f"PASS: {success}; ТРЕБУЕТ ПРОВЕРКИ: {review}; ошибок: {errors}; предупреждений: {warnings}."
+            or f"Всего исходов: {success + review + errors}; проверено: {success}; требует проверки: {review}; отказы/пропуски: {errors}; предупреждений: {warnings}."
         )
         self.bar.setRange(0, 1)
         self.bar.setValue(1)

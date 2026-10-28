@@ -35,6 +35,7 @@ class ParseIssue:
     message: str
     severity: Severity = "warning"
     source: SourceRef | None = None
+    related_sources: tuple[SourceRef, ...] = ()
 
     @property
     def category(self) -> str:
@@ -155,10 +156,39 @@ class CoreInterval:
     source_fields: list[TextBlock] = field(default_factory=list)
     lithology: str | None = None
     hydrocarbons: str | None = None
+    parts: list[CorePart] = field(default_factory=list)
 
     @property
     def full_text(self) -> str:
         return "\n".join(b.text for b in self.body_blocks)
+
+
+@dataclass(frozen=True)
+class CorePart:
+    """Source-backed fragment; ordinal is local and is NEVER a geological ID."""
+
+    parent_source: SourceRef
+    source: SourceRef
+    ordinal: int
+    body_blocks: tuple[TextBlock, ...]
+    raw_text: str
+    full_text: str
+    start: int
+    end: int
+    split_proven: bool
+    lithology: str | None = None
+    hydrocarbons: str | None = None
+
+
+@dataclass(frozen=True)
+class SuppressedDuplicate:
+    source: SourceRef
+    retained_source: SourceRef
+    source_number: int
+    retained_number: int
+    compared_fields: tuple[str, ...]
+    drilled_effect: Decimal
+    recovered_effect: Decimal
 
 
 @dataclass(frozen=True)
@@ -167,6 +197,13 @@ class NoCoreInterval:
     source: SourceRef
     evidence: str
     kind: Literal["NO_RECOVERY", "DRILLED_WITHOUT_CORE"] = "DRILLED_WITHOUT_CORE"
+    drilled: Decimal | None = None
+    metrics: dict[str, Metric] = field(default_factory=dict)
+    number: int | None = None
+
+    @property
+    def recovered(self) -> Decimal | None:
+        return Decimal(0) if self.kind == "NO_RECOVERY" else None
 
 
 @dataclass
@@ -183,6 +220,13 @@ class ParseResult:
     no_core: list[NoCoreInterval] = field(default_factory=list)
     totals: dict[str, Metric] = field(default_factory=dict)
     reconciliation: dict[str, dict[str, Decimal]] = field(default_factory=dict)
+    reconciliation_notes: dict[str, str] = field(default_factory=dict)
+    suppressed_duplicates: list[SuppressedDuplicate] = field(default_factory=list)
+
+    @property
+    def active_cores(self) -> list[CoreInterval]:
+        suppressed = {d.source for d in self.suppressed_duplicates}
+        return [c for c in self.cores if c.source not in suppressed]
 
     @property
     def status(self) -> DocumentStatus:
@@ -223,7 +267,7 @@ class ParseResult:
 class ConversionResult:
     source: Path
     output: Path | None
-    status: Literal["success", "review_required", "unsupported", "error"]
+    status: Literal["success", "review_required", "unsupported", "error", "skipped"]
     issues: list[ParseIssue]
     parsed: ParseResult | None = None
 

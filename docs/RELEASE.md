@@ -89,6 +89,8 @@ endpoint `/releases/tags/...` до публикации возвращает 404
 
 Новый frozen receipt содержит `core_interval_gate=PASS`, `review_policy_gate=PASS`,
 `core_interval_records=3`, `review_documents=2` наряду с прежними baseline gates.
-`verify_bundle` проверяет их до публикации. CORE_INTERVAL — перенос целой исходной
-записи; неизвестные глубины геологических слоёв не заявляются. Release Notes
+`verify_bundle` проверяет их до публикации. Дополнительно обязательны business_rules_gate=PASS и output_schema=core24-v1:
+проверяются доказанные части, дедупликация, нулевой выход и X в том же EXE.
+CORE_INTERVAL переносит полные исходные описания в доказанные части либо целиком;
+неизвестные глубины геологических слоёв не заявляются. Release Notes
 явно сохраняют REVIEW_REQUIRED и PENDING приёмку, независимо от успешной сборки.
