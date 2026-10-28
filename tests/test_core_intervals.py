@@ -368,7 +368,7 @@ def test_zero_drilling_is_never_validated_as_no_core():
 
 
 def test_explicit_layered_well_summary_has_own_scope(sample):
-    _, word, _ = sample
+    folder, word, template = sample
     d = Document(word)
     for prefix, drilled, recovered in (
         ("Всего по пласту Учебному", "3м", "3м"),
@@ -381,6 +381,13 @@ def test_explicit_layered_well_summary_has_own_scope(sample):
     p = parse_document(read_word(word))
     assert p.totals["linear_recovery"].value == Decimal("4.75")
     assert p.status == "REVIEW_REQUIRED" and "summary_mismatch" in {i.code for i in p.issues}
+    result = convert_batch(folder, template)[0]
+    assert result.output is not None
+    book = load_workbook(result.output)
+    row = next(row for row in book["Контроль"] if row[11].value == "summary_mismatch")
+    assert "Проходка Word" in row[8].value and "По уникальным исходным записям" in row[9].value
+    assert "Decimal" not in row[9].value and "{" not in row[9].value
+    book.close()
 
 
 def test_workbook_failure_does_not_report_document_pass(sample):

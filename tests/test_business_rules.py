@@ -409,3 +409,10 @@ def test_zero_boxed_is_not_zero_recovery_when_geological_layers_exist(sample):
     assert result.parsed.runs[0].recovered == 3 and not result.parsed.runs[0].no_core
     assert result.parsed.runs[1].recovered == 2 and not result.parsed.runs[1].no_core
     assert "zero_recovery_conflict" not in {i.code for i in result.issues}
+
+
+def test_control_physical_locator_uses_table_and_row_with_default_xml_index():
+    from coredescriptionw2e.excel.control import physical_locator
+
+    source = SourceRef("synthetic.docx", "/w:document/w:body/w:tbl/w:tr[4]/cell:1/p:2", 9)
+    assert physical_locator(source) == "Таблица 1, строка 4, ячейка 2"

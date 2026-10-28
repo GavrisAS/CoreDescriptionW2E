@@ -59,8 +59,13 @@ def physical_locator(source) -> str:
     table = re.search(r"(?:w:tbl|tbl)[\[:](\d+)", source.position)
     row = re.search(r"(?:w:tr|tr)[\[:](\d+)", source.position)
     cell = re.search(r"(?:w:tc|tc)[\[:](\d+)", source.position)
-    if table and row:
-        return f"Таблица {table[1]}, строка {row[1]}" + (f", ячейка {cell[1]}" if cell else "")
+    if (table or "w:tbl" in source.position) and (row or "w:tr" in source.position):
+        number = cell[1] if cell else None
+        if number is None and (m := re.search(r"/cell:(\d+)", source.position)):
+            number = str(int(m[1]) + 1)
+        return f"Таблица {table[1] if table else '1'}, строка {row[1] if row else '1'}" + (
+            f", ячейка {number}" if number else ""
+        )
     return f"Текстовый блок {source.order + 1}"
 
 
@@ -85,10 +90,30 @@ def locator(owner, entry=None) -> str:
 def issue_values(issue, owners, parsed):
     """Original and comparison facts kept separate; never a substituted metric."""
     if issue.code.startswith("summary"):
-        return str({k: str(m.value) for k, m in parsed.totals.items()}), str(parsed.reconciliation)
+        source = (
+            "; ".join(
+                f"{'Проходка Word' if key == 'declared_drilled' else 'Поднято / вынос Word'}: {metric.value} м"
+                for key, metric in parsed.totals.items()
+            )
+            or "Итог Word не определён"
+        )
+        totals = parsed.reconciliation.get(
+            "exported_unique", parsed.reconciliation.get("all_runs", {})
+        )
+        drilled = totals.get("drilled", totals.get("declared_drilled"))
+        recovered = totals.get("recovered", totals.get("linear_recovery"))
+        compared = f"По уникальным исходным записям: J={drilled if drilled is not None else 'не определено'} м; K={recovered if recovered is not None else 'не определено'} м. Объём и сопоставимость — проверить по Реестру."
+        return source, compared
     if not owners:
         return "См. исходный блок на листе Источники", None
     owner = owners[0][0]
+    entry = owners[0][1]
+    if issue.code in {"ambiguous_lithology", "ambiguous_hydrocarbons", "split_ambiguous"}:
+        return (
+            entry.full_text[:240] if entry else "См. исходный блок"
+        ), "Неоднозначный признак не подставлен; полное описание сохранено в W."
+    if issue.code == "missing_stratum":
+        return "Однозначный пласт не определён по описанию", "S оставлена пустой"
     if issue.code in {"layer_overlap", "core_overlap"}:
         return " / ".join(
             interval_text(entry.drilling if isinstance(entry, Layer) else parent.drilling)
@@ -100,9 +125,21 @@ def issue_values(issue, owners, parsed):
         ) if "declared_percent" in owner.metrics else None, str(
             owner.metrics.get("computed_percent").value
         ) if "computed_percent" in owner.metrics else None
-    return "; ".join(
-        f"{m.variant}={m.value}" for m in owner.metrics.values() if m.status == "DECLARED"
-    ), f"J={owner.drilled}; K={owner.recovered}"
+    names = {
+        "declared_drilled": "Проходка Word",
+        "declared_core": "Керна Word",
+        "linear_recovery": "Линейный вынос Word",
+        "boxed_core": "В коробках Word",
+        "declared_percent": "Процент Word",
+    }
+    return (
+        "; ".join(
+            f"{names.get(m.variant, m.variant)}: {m.value}"
+            for m in owner.metrics.values()
+            if m.status == "DECLARED"
+        ),
+        f"J={owner.drilled if owner.drilled is not None else 'не указано'}; K={owner.recovered if owner.recovered is not None else 'не указано'}",
+    )
 
 
 def add_control(workbook, parsed, main, mapping, entries, long_texts, writer_issues) -> None:
@@ -397,7 +434,14 @@ def add_control(workbook, parsed, main, mapping, entries, long_texts, writer_iss
             labels = labels[:3] + [
                 f"и ещё {len(labels) - 3}; полный перечень — Реестр, строки Excel указаны рядом"
             ]
-        source_block = next((b for b in parsed.document.blocks if b.source == issue.source), None)
+        source_block = next(
+            (
+                b
+                for b in parsed.document.blocks
+                if issue.source and b.source.position == issue.source.position
+            ),
+            None,
+        )
         if not labels:
             owner = next((o for o in owners if o.source == issue.source), None)
             labels = (
