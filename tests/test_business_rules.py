@@ -72,7 +72,7 @@ def test_split_complete_parent_parts_x_and_control(sample):
     [
         ("Верх: песчаник.\nНиз: аргиллит.", 2, False),
         ("Песчаник с тонким прослоем аргиллита, линза на 0,1–0,2 м.", 1, False),
-        ("Песчаник.\nАргиллит.", 1, False),
+        ("Песчаник.\nАргиллит.", 1, True),
         ("0,5м – Песчаник.", 1, False),
         ("Общее описание.\n0,5м – Песчаник.\n0,5м – Аргиллит.", 1, True),
         ("0,5м – Песчаник.\n0,1м – а.в.о.\n0,5м – Аргиллит.", 1, True),
@@ -86,6 +86,8 @@ def test_split_proof_and_ambiguity(sample, text, parts, ambiguous):
     assert len(p.cores[0].parts) == parts
     assert ("split_ambiguous" in {i.code for i in p.issues}) == ambiguous
     assert "\n".join(part.full_text for part in p.cores[0].parts) == text
+    if ambiguous:
+        assert all(part.lithology is None for part in p.cores[0].parts)
 
 
 @pytest.mark.parametrize(
@@ -95,6 +97,7 @@ def test_split_proof_and_ambiguity(sample, text, parts, ambiguous):
         ("0,55м – Серпентинит учебный.", "Серпентинит"),
         ("а.в.о.", None),
         ("Песчаник и аргиллит.", None),
+        ("Песчаник учебный. Ниже описан аргиллит.", None),
         ("Буроватый углистый оттенок, сульфиды.", None),
     ],
 )

@@ -43,6 +43,8 @@ def split_core(core: CoreInterval) -> tuple[list[CorePart], bool]:
     proven = len(starts) >= 2 and starts[0] == 0 and not uncertain_power
     ambiguous = bool(starts) and not proven and (len(starts) > 1 or starts[0] != 0)
     ambiguous = ambiguous or uncertain_power
+    if not proven and len({label for b in core.body_blocks if (label := lithology(b.text))}) > 1:
+        ambiguous = True
     # Multiple explicit markers inside a paragraph are retained, never split mid-sentence.
     if re.search(r"\S[^\n]*\b(?:Верх|Низ)\s*:", text, re.I) and not proven:
         ambiguous = True

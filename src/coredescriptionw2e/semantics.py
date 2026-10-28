@@ -52,9 +52,10 @@ def lithology(text: str) -> str | None:
         for m in re.finditer(rf"\b(?:{pattern})\b", opening, re.I)
     )
     labels = list(dict.fromkeys(label for _, label in matches))
-    if MIXED.search(opening) and len(labels) > 1:
+    all_labels = {label for pattern, label in ROCKS if re.search(rf"\b(?:{pattern})\b", text, re.I)}
+    if MIXED.search(opening) and len(labels) > 1 and all_labels == set(labels):
         return " / ".join(labels)
-    if len(labels) == 1 and matches[0][0] == 0:
+    if len(labels) == 1 and matches[0][0] == 0 and len(all_labels) == 1:
         return labels[0]
     return None
 
