@@ -430,6 +430,12 @@ def add_control(workbook, parsed, main, mapping, entries, long_texts, writer_iss
         matches = dict(sorted(matches.items()))
         matched_owners = [(owner, entry) for _, owner, entry in matches.values()]
         labels = list(dict.fromkeys(locator(owner, entry) for owner, entry in matched_owners))
+        if issue.code == "suppressed_duplicate":
+            duplicate = next(d for d in parsed.suppressed_duplicates if d.source == issue.source)
+            original_owner = next(c for c in parsed.cores if c.source == duplicate.source)
+            labels = [
+                f"Исключён: {locator(original_owner)}; оставлен Керн {duplicate.retained_number}"
+            ]
         if len(labels) > 3:
             labels = labels[:3] + [
                 f"и ещё {len(labels) - 3}; полный перечень — Реестр, строки Excel указаны рядом"

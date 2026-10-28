@@ -189,6 +189,7 @@ def test_full_duplicate_requires_all_fields(sample, different):
         book = load_workbook(r.output)
         rows = [row for row in book["Контроль"] if row[11].value == "suppressed_duplicate"]
         assert len(rows) == 1 and rows[0][7].hyperlink
+        assert "Керн 8" in rows[0][4].value and "Керн 1" in rows[0][4].value
         book.close()
 
 
